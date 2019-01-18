@@ -1,20 +1,21 @@
 import torch
 import argparse
 import gym
-from viewer import UniImageViewer
+
+import models
+from util import UniImageViewer
 import cv2
 #from vanilla_pong import PolicyNet
-from ppo_clip_discrete import MultiPolicyNet
+from models import MultiPolicyNet
 import ppo_clip_discrete
-#from ppo_pong import PolicyNet as PPOPolicyNet
 from torchvision.transforms.functional import to_tensor
 import numpy as np
 import time
 
 
-def downsample(observation):
+def prepro(observation):
     greyscale = cv2.cvtColor(observation, cv2.COLOR_BGR2GRAY)
-    greyscale = cv2.resize(greyscale, downsample_image_size, cv2.INTER_LINEAR)
+    greyscale = cv2.resize(greyscale, prepro_image_size, cv2.INTER_LINEAR)
     return greyscale
 
 
@@ -29,27 +30,22 @@ if __name__ == '__main__':
     parser.set_defaults(multi=False, ppo=True)
     args = parser.parse_args()
 
-    downsample_image_size = (100, 80)
-    features = downsample_image_size[0] * downsample_image_size[1]
+    prepro_image_size = (100, 80)
+    features = prepro_image_size[0] * prepro_image_size[1]
     default_action = 2
     num_rollouts = 10
 
-    # if args.multi:
-    #     policy = MultiPolicyNet(features, [2, 3])
-    # elif args.ppo:
-    #     pong_action_map = [0, 2, 3]
-    #     policy = PPOWrap(features, pong_action_map)
-    # else:
-    #     policy = PolicyNet(features)
+    args.reload = r'runs\ppo_multilabel_807\vanilla.wgt'
 
-    args.reload = r'runs\ppo_multilabel_752\vanilla.wgt'
+    env_config = ppo_clip_discrete.LunarLander()
+
     pong_action_map = [0, 2, 3]
-    policy = ppo_clip_discrete.PPOWrap(features, pong_action_map)
+    policy = models.PPOWrap(env_config.features, env_config.action_map, env_config.hidden)
 
 
     policy.load_state_dict(torch.load(args.reload))
-    env = gym.make('Pong-v0')
-    v = UniImageViewer('pong', (200, 160))
+    env = gym.make(env_config.gym_env_string)
+    v = UniImageViewer(env_config.gym_env_string, (200, 160))
 
     if args.list:
         print(env.unwrapped.get_action_meanings())
@@ -61,33 +57,24 @@ if __name__ == '__main__':
         gl = []
 
         observation_t0 = env.reset()
-        observation_t0 = downsample(observation_t0)
+        observation_t0 = env_config.prepro(observation_t0)
         action = default_action
         observation_t1, reward, done, info = env.step(action)
-        observation_t1 = downsample(observation_t1)
+        observation_t1 = env_config.prepro(observation_t1)
         observation = observation_t1 - observation_t0
         observation_t0 = observation_t1
         done = False
 
         while not done:
-            observation_tensor = to_tensor(np.expand_dims(observation, axis=2)).squeeze().unsqueeze(0).view(-1,
-                                                                                                            features)
+            observation_tensor = env_config.transform(observation)
             action_logprob = policy(observation_tensor)
             action = policy.new.max_action(action_logprob)
-            # if action_prob > 0.9:
-            #     action = 2
-            # elif action_prob < 0.1:
-            #     action = 3
-            # else
-            #     action = 0
-
-            #action = 2 if np.random.uniform() < action_prob.item() else 3
-            observation_t1, reward, done, info = env.step(action)
+            observation_t1, reward, done, info = env.step(action.squeeze().item())
 
             env.render(mode='human')
 
             # compute the observation that resulted from our action
-            observation_t1 = downsample(observation_t1)
+            observation_t1 = env_config.prepro(observation_t1)
             observation = observation_t1 - observation_t0
             observation_t0 = observation_t1
 
