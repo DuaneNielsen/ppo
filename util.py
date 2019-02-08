@@ -186,14 +186,15 @@ def get_tensors(gpu_only=True):
             pass
 
 
-print_tensor_sizes = True
-last_tensor_sizes = set()
-gpu_profile_fn = f'{datetime.datetime.now():%d-%b-%y-%H-%M-%S}-gpu_mem_prof.txt'
-lineno = None
-func_name = None
-filename = None
-module_name = None
-tb_step = 0
-rundir = f'runs/ppo_multilabel_{random.randint(0,1000)}'
-print(rundir)
-tb = SummaryWriter(rundir)
+class Init:
+    def __init__(self, name):
+        self.print_tensor_sizes = True
+        self.last_tensor_sizes = set()
+        self.gpu_profile_fn = f'{datetime.datetime.now():%d-%b-%y-%H-%M-%S}-gpu_mem_prof.txt'
+        self.lineno = None
+        self.func_name = None
+        self.filename = None
+        self.module_name = None
+        self.tb_step = 0
+        self.rundir = f'runs/{name}_{random.randint(0,1000)}'
+        self.tb = SummaryWriter(self.rundir)
