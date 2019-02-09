@@ -3,47 +3,24 @@ import argparse
 import gym
 
 import models
-#from util import UniImageViewer
-import ppo_clip_discrete
 import time
+import pathlib
+import inspect
+import configs
+import gym_duane
 
-
-if __name__ == '__main__':
-
-    parser = argparse.ArgumentParser('learn to play pong')
-    parser.add_argument('--env', default='LunarLander')
-    parser.add_argument('--reload', default=r'runs\lander_118\vanilla.wgt')
-    parser.add_argument('--speed', type=float, default=0.02)
-    parser.set_defaults(multi=False, ppo=True)
-    args = parser.parse_args()
-
-    num_rollouts = 100
-
-    class_ = getattr(ppo_clip_discrete, args.env)
-    env_config = class_()
-
-    policy = models.PPOWrap(env_config.features, env_config.action_map, env_config.hidden)
-
-    print(args.reload)
-    policy.load_state_dict(torch.load(args.reload))
+def demo(env_config, policy, speed, episodes=3):
 
     env = gym.make(env_config.gym_env_string)
-    #v = UniImageViewer(env_config.gym_env_string, (200, 160))
 
-    # if args.list:
-    #     print(env.unwrapped.get_action_meanings())
-    #     exit()
-
-    for i in range(num_rollouts):
+    for i in range(episodes):
 
         episode_length = 0
 
         observation_t0 = env.reset()
-        observation_t0 = env_config.prepro(observation_t0)
         action = env_config.default_action
         observation_t1, reward, done, info = env.step(action)
-        observation_t1 = env_config.prepro(observation_t1)
-        observation = observation_t1 - observation_t0
+        observation = env_config.prepro(observation_t1, observation_t0)
         observation_t0 = observation_t1
         done = False
 
@@ -57,10 +34,39 @@ if __name__ == '__main__':
             done = done or episode_length > env_config.max_rollout_len
 
             # compute the observation that resulted from our action
-            observation_t1 = env_config.prepro(observation_t1)
-            observation = observation_t1 - observation_t0
+            observation = env_config.prepro(observation_t1, observation_t0)
             observation_t0 = observation_t1
 
-            time.sleep(args.speed)
+            time.sleep(speed)
             episode_length += 1
 
+
+
+if __name__ == '__main__':
+
+    parser = argparse.ArgumentParser('learn to play pong')
+    parser.add_argument('--env', default='LunarLander')
+    parser.add_argument('--reload', default='latest')
+    parser.add_argument('--speed', type=float, default=0.02)
+    parser.add_argument('--episodes', type=int, default=3)
+    parser.add_argument('--list', dest='list', action='store_true')
+    parser.set_defaults(multi=False, ppo=True)
+    args = parser.parse_args()
+
+    if args.list:
+        for name, obj in inspect.getmembers(configs):
+            if inspect.isclass(obj) and obj.__module__ is configs.__name__:
+                print(name)
+        exit(0)
+
+    class_ = getattr(configs, args.env)
+    env_config = class_()
+
+    policy = models.PPOWrap(env_config.features, env_config.action_map, env_config.hidden)
+
+    if args.reload is 'latest':
+        _, args.reload = max([(f.stat().st_mtime, f) for f in list(pathlib.Path('runs').glob(f'{env_config.gym_env_string}*/*.wgt'))])
+
+    policy.load_state_dict(torch.load(args.reload))
+
+    demo(env_config, policy, args.speed)

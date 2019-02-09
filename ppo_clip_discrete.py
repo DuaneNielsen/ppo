@@ -2,7 +2,7 @@ from __future__ import print_function
 import os
 
 import util
-from data import RolloutDataSet
+from configs import AlphaDroneRacer
 from models import PPOWrap
 
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
@@ -11,14 +11,10 @@ os.environ['GPU_DEBUG'] = '0'
 import torch
 from torch.utils.data import DataLoader
 import gym
-import gym_duane
 from util import UniImageViewer, timeit
-import cv2
 import math
-from torchvision.transforms.functional import to_tensor
-import numpy as np
-import data
-import random
+import configs
+import gym_duane
 
 @timeit
 def rollout_adversarial_policy(policy, env_config):
@@ -93,16 +89,15 @@ def rollout_policy(policy, env_config):
     v = UniImageViewer(env_config.gym_env_string, (200, 160))
     env = gym.make(env_config.gym_env_string)
 
+
     for i in range(num_rollouts):
 
         episode_length = 0
 
         observation_t0 = env.reset()
-        observation_t0 = env_config.prepro(observation_t0)
         action = env_config.default_action
         observation_t1, reward, done, info = env.step(action)
-        observation_t1 = env_config.prepro(observation_t1)
-        observation = observation_t1 - observation_t0
+        observation = env_config.prepro(observation_t1, observation_t0)
         observation_t0 = observation_t1
         done = False
 
@@ -121,8 +116,7 @@ def rollout_policy(policy, env_config):
             rollout_dataset.append(observation, reward, index, done)
 
             # compute the observation that resulted from our action
-            observation_t1 = env_config.prepro(observation_t1)
-            observation = observation_t1 - observation_t0
+            observation = env_config.prepro(observation_t1, observation_t0)
             observation_t0 = observation_t1
 
             if view_games:
@@ -132,13 +126,20 @@ def rollout_policy(policy, env_config):
 
         # more monitoring
         config.tb.add_scalar('reward', reward_total, config.tb_step)
+        global best_reward
+        if not best_reward or reward_total > best_reward:
+            best_reward = reward_total
+            save_epoch = config.tb_step // save_freq
+            torch.save(policy.state_dict(), config.rundir + f'/{save_epoch}.wgt')
+
+        if config.tb_step % save_freq == 0:
+            best_reward = None
         reward_total = 0
+
         config.tb.add_scalar('epi_len', episode_length, config.tb_step)
         config.tb_step += 1
 
-    # save the file every so often
-    if epoch % 20 == 0:
-        torch.save(policy.state_dict(), config.rundir + '/vanilla.wgt')
+    torch.save(policy.state_dict(), config.rundir + f'/latest.wgt')
 
     rollout_dataset.normalize()
     return rollout_dataset
@@ -211,116 +212,6 @@ def train_policy(policy, rollout_dataset, optim, device='cpu'):
         gpu_profile(frame=sys._getframe(), event='line', arg=None)
 
 
-class Pong:
-    def __init__(self):
-        self.gym_env_string = 'Pong-v0'
-        self.downsample_image_size = (100, 80)
-        self.features = self.downsample_image_size[0] * self.downsample_image_size[1]
-        self.hidden = 200
-        self.action_map = [0, 1, 2, 3]
-        self.default_action = 0
-        self.discount_factor = 0.99
-        self.max_rollout_len = 3000
-
-    def prepro(self, observation):
-        greyscale = cv2.cvtColor(observation, cv2.COLOR_BGR2GRAY)
-        greyscale = cv2.resize(greyscale, self.downsample_image_size, cv2.INTER_LINEAR)
-        return greyscale
-
-    def transform(self, observation, insert_batch=False):
-        if insert_batch:
-            return to_tensor(np.expand_dims(observation, axis=2)).view(1, self.features)
-        else:
-            return to_tensor(np.expand_dims(observation, axis=2)).view(self.features)
-
-
-class LunarLander:
-    def __init__(self):
-        self.gym_env_string = 'LunarLander-v2'
-        self.features = 8
-        self.hidden = 8
-        self.action_map = [0, 1, 2, 3]
-        self.default_action = 0
-        self.discount_factor = 0.99
-        self.max_rollout_len = 900
-
-    def construct_dataset(self):
-        return RolloutDataSet(self)
-
-    def prepro(self, observation):
-        return observation
-
-    def transform(self, observation, insert_batch=False):
-        """
-        :param observation: the raw observation
-        :param insert_batch: add a batch dimension to the front
-        :return: tensor in shape (batch, dims)
-        """
-        if insert_batch:
-            return torch.from_numpy(observation).float().unsqueeze(0)
-        else:
-            return torch.from_numpy(observation).float()
-
-
-class PongAdversarial:
-    def __init__(self):
-        self.gym_env_string = 'PymunkPong-v0'
-        self.downsample_image_size = (100, 80)
-        self.features = 100 * 80
-        self.hidden = 200
-        self.action_map = [0, 1, 2]
-        self.default_action = 2
-        self.discount_factor = 0.99
-        self.max_rollout_len = 1000
-
-    def construct_dataset(self):
-        return data.BufferedRolloutDataset(self.discount_factor, transform=self.transform)
-
-    def prepro(self, t1, t0):
-        def reduce(observation):
-            greyscale = cv2.cvtColor(observation, cv2.COLOR_BGR2GRAY)
-            greyscale = cv2.resize(greyscale, self.downsample_image_size, cv2.INTER_LINEAR)
-            return greyscale
-        t1 = reduce(t1)
-        t0 = reduce(t0)
-        return t1 - t0
-
-    def transform(self, observation, insert_batch=False):
-        observation_t = to_tensor(np.expand_dims(observation, axis=2)).view(self.features)
-        if insert_batch:
-            observation_t = observation_t.unsqueeze(0)
-        return observation_t
-
-
-class AlphaDroneRacer:
-    def __init__(self):
-        self.gym_env_string = 'AlphaRacer2D-v0'
-        self.features = 7
-        self.hidden = 7
-        self.action_map = [0, 1, 2, 3]
-        self.default_action = 0
-        self.discount_factor = 0.99
-        self.max_rollout_len = 900
-        self.adversarial = False
-
-    def construct_dataset(self):
-        return RolloutDataSet(self)
-
-    def prepro(self, observation):
-        return observation
-
-    def transform(self, observation, insert_batch=False):
-        """
-        :param observation: the raw observation
-        :param insert_batch: add a batch dimension to the front
-        :return: tensor in shape (batch, dims)
-        """
-        if insert_batch:
-            return torch.from_numpy(observation).float().unsqueeze(0)
-        else:
-            return torch.from_numpy(observation).float()
-
-
 if __name__ == '__main__':
 
     gpu_profile = False
@@ -337,17 +228,19 @@ if __name__ == '__main__':
     collected_rollouts = 0
     device = 'cpu' if torch.cuda.is_available() else 'cpu'
     max_minibatch_size = 400000
-    resume = False
-    view_games = True
+    resume = True
+    view_games = False
     view_obs = False
     debug = False
+    save_freq = 1000
+    best_reward = None
 
-    env_config = AlphaDroneRacer()
+    env_config = configs.AlphaDroneRacer()
     config = util.Init(env_config.gym_env_string)
 
     policy_net = PPOWrap(env_config.features, env_config.action_map, env_config.hidden)
     if resume:
-        policy_net.load_state_dict(torch.load('runs/PymunkPong-v0_646/vanilla.wgt'))
+        policy_net.load_state_dict(torch.load('runs/AlphaRacer2D-v0_941/3.wgt'))
 
     optim = torch.optim.Adam(lr=1e-4, params=policy_net.new.parameters())
 

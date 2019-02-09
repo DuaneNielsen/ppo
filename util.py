@@ -123,12 +123,12 @@ def gpu_profile(frame, event, arg):
                 line = linecache.getline(filename, lineno)
                 where_str = module_name + ' ' + func_name + ':' + str(lineno)
 
-                with open(gpu_profile_fn, 'a+') as f:
+                with open(arg.gpu_profile_fn, 'a+') as f:
                     f.write(f"{where_str:<50}"
                             f":{meminfo.used/1024**2:<7.1f}Mb "
                             f"{line.rstrip()}\n")
 
-                    if print_tensor_sizes is True:
+                    if arg.print_tensor_sizes is True:
                         for tensor in get_tensors():
                             if not hasattr(tensor, 'dbg_alloc_where'):
                                 tensor.dbg_alloc_where = where_str
