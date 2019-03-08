@@ -39,6 +39,9 @@ class LunarLander:
         self.default_action = 0
         self.discount_factor = 0.99
         self.max_rollout_len = 900
+        self.adversarial = False
+        self.default_save = ['lunar_lander/solved.wgt']
+        self.players = 1
 
     def construct_dataset(self):
         return RolloutDataSet(self)

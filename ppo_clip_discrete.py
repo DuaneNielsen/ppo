@@ -236,7 +236,8 @@ if __name__ == '__main__':
     best_reward = None
 
     #env_config = configs.AlphaDroneRacer()
-    env_config = configs.Bouncer()
+    #env_config = configs.Bouncer()
+    env_config = configs.LunarLander()
     config = util.Init(env_config.gym_env_string)
 
     policy_net = PPOWrap(env_config.features, env_config.action_map, env_config.hidden)
