@@ -224,18 +224,19 @@ if __name__ == '__main__':
 
 
     num_epochs = 6000
-    num_rollouts = 25
+    num_rollouts = 60
     collected_rollouts = 0
     device = 'cpu' if torch.cuda.is_available() else 'cpu'
     max_minibatch_size = 400000
-    resume = True
+    resume = False
     view_games = False
     view_obs = False
     debug = False
     save_freq = 1000
     best_reward = None
 
-    env_config = configs.AlphaDroneRacer()
+    #env_config = configs.AlphaDroneRacer()
+    env_config = configs.Bouncer()
     config = util.Init(env_config.gym_env_string)
 
     policy_net = PPOWrap(env_config.features, env_config.action_map, env_config.hidden)

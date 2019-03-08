@@ -68,6 +68,8 @@ class PongAdversarial:
         self.default_action = 2
         self.discount_factor = 0.99
         self.max_rollout_len = 1000
+        self.players = 2
+        self.default_save = ['saved/adv_pong.wgt']
 
     def construct_dataset(self):
         return data.BufferedRolloutDataset(self.discount_factor, transform=self.transform)
@@ -98,6 +100,39 @@ class AlphaDroneRacer:
         self.discount_factor = 0.99
         self.max_rollout_len = 900
         self.adversarial = False
+        self.default_save = ['saved/alpha_oscilating.wgt']
+        self.players = 1
+
+    def construct_dataset(self):
+        return RolloutDataSet(self)
+
+    def prepro(self, observation_t1, observation_t0):
+        return np.concatenate((observation_t1, observation_t0))
+
+    def transform(self, observation, insert_batch=False):
+        """
+        :param observation: the raw observation
+        :param insert_batch: add a batch dimension to the front
+        :return: tensor in shape (batch, dims)
+        """
+        if insert_batch:
+            return torch.from_numpy(observation).float().unsqueeze(0)
+        else:
+            return torch.from_numpy(observation).float()
+
+
+class Bouncer:
+    def __init__(self):
+        self.gym_env_string = 'Bouncer-v0'
+        self.features = 8
+        self.hidden = 8
+        self.action_map = [0, 1, 2, 3, 4]
+        self.default_action = 0
+        self.discount_factor = 0.99
+        self.max_rollout_len = 900
+        self.adversarial = False
+        self.default_save = ['saved/bouncer.wgt']
+        self.players = 1
 
     def construct_dataset(self):
         return RolloutDataSet(self)
