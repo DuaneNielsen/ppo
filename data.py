@@ -63,6 +63,7 @@ class RolloutDataSet(RolloutDataSetAbstract):
             self.value = self.value + list(reversed(values))
             self.start = len(self.rollout)
 
+
 class PongDataset(RolloutDataSetAbstract):
     def __init__(self, discount_factor, features):
         super().__init__(discount_factor)

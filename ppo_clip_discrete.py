@@ -205,14 +205,17 @@ def train_policy(policy, rollout_dataset, optim, device='cpu'):
                 print(f'CHNGE {( torch.exp(updated_logprob) - torch.exp(new_logprob) ).data[0]}')
                 print(f'NEW_G {torch.exp(new_logprob.grad.data[0])}')
 
-            config.tb.add_scalar('memory_allocated', torch.cuda.memory_allocated(), config.tb_step)
-            config.tb.add_scalar('memory_cached', torch.cuda.memory_cached(), config.tb_step)
+            if device is 'cuda':
+                config.tb.add_scalar('memory_allocated', torch.cuda.memory_allocated(), config.tb_step)
+                config.tb.add_scalar('memory_cached', torch.cuda.memory_cached(), config.tb_step)
     print(f'processed {batches_p} batches')
     if gpu_profile:
         gpu_profile(frame=sys._getframe(), event='line', arg=None)
 
 
 if __name__ == '__main__':
+
+    print('Starting')
 
     gpu_profile = False
     if gpu_profile:
@@ -239,6 +242,8 @@ if __name__ == '__main__':
     #env_config = configs.Bouncer()
     env_config = configs.LunarLander()
     config = util.Init(env_config.gym_env_string)
+
+    print(f'Loaded {env_config.gym_env_string}')
 
     policy_net = PPOWrap(env_config.features, env_config.action_map, env_config.hidden)
     if resume:
