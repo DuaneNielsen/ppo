@@ -1,11 +1,15 @@
 import statistics
+from abc import ABCMeta, abstractmethod
+
 import torch
 import numpy as np
 from torch.utils.data import Dataset
-from torchvision.transforms.functional import to_tensor
+import redis
+import struct
+from bisect import bisect_right
 
 
-class RolloutDataSetAbstract(Dataset):
+class RolloutDatasetAbstract(Dataset, metaclass=ABCMeta):
     def __init__(self, env_config):
         """
 
@@ -20,12 +24,9 @@ class RolloutDataSetAbstract(Dataset):
         self.discount_factor = env_config.discount_factor
         self.transform = env_config.transform
 
-    def append(self, observation, reward, action, done):
-        self.rollout.append((observation, reward, action))
-        self.advantage(observation, reward, action, done)
-
+    @abstractmethod
     def advantage(self, observation, reward, action, done):
-        raise NotImplementedError
+        pass
 
     def normalize(self):
         mean = statistics.mean(self.value)
@@ -34,6 +35,38 @@ class RolloutDataSetAbstract(Dataset):
 
     def total_reward(self):
         return sum([reward[1] for reward in self.rollout])
+
+    @abstractmethod
+    def transform(self, observation, insert_batch):
+        pass
+
+    @abstractmethod
+    def __getitem__(self, item):
+        pass
+
+    @abstractmethod
+    def __len__(self):
+        pass
+
+
+class RedisDataset(RolloutDatasetAbstract):
+
+    def __init__(self, host='localhost', port=6379, db=0):
+        self.db = Db(host, port, db)
+        self.rollout = None
+
+    def __getitem__(self, item):
+        pass
+
+
+class SingleProcessDataSetAbstract(RolloutDatasetAbstract):
+
+    def append(self, observation, reward, action, done):
+        self.rollout.append((observation, reward, action))
+        self.advantage(observation, reward, action, done)
+
+    def advantage(self, observation, reward, action, done):
+        raise NotImplementedError
 
     def transform(self, observation, insert_batch=False):
         raise NotImplementedError
@@ -48,7 +81,7 @@ class RolloutDataSetAbstract(Dataset):
         return len(self.rollout)
 
 
-class RolloutDataSet(RolloutDataSetAbstract):
+class SingleProcessDataSet(SingleProcessDataSetAbstract):
     def __init__(self, discount_factor):
         super().__init__(discount_factor)
 
@@ -64,7 +97,7 @@ class RolloutDataSet(RolloutDataSetAbstract):
             self.start = len(self.rollout)
 
 
-class PongDataset(RolloutDataSetAbstract):
+class PongDataset(SingleProcessDataSetAbstract):
     def __init__(self, discount_factor, features):
         super().__init__(discount_factor)
         self.features = features
@@ -81,6 +114,97 @@ class PongDataset(RolloutDataSetAbstract):
             self.start = len(self.rollout)
 
 
+class Db:
+    def __init__(self, host='localhost', port=6379, db=0):
+        self.db = redis.Redis(host=host, port=port, db=db)
+
+    def create_rollout(self, observation_dtype):
+        if self.db.get('rollouts') is None:
+            self.db.set('rollouts', '0')
+        rollout = Rollout(self.db, int(self.db.get('rollouts')), observation_dtype)
+        self.db.incr('rollouts')
+        return rollout
+
+    def drop(self):
+        """clears all data from the database"""
+        self.db.flushall()
+
+class Rollout:
+    def __init__(self, db, id, observation_dtype):
+        self.id = id
+        self.db = db
+        self.episode_len = []
+        self.episode_off = []
+        self.observation_dtype = observation_dtype
+
+    def end(self):
+        len = int(self.db.get(self.key()))
+        for episode in range(len):
+            self.episode_len.append(int(self.db.llen(Episode.key(self.id, episode))))
+
+        offset = 0
+        for l in self.episode_len:
+            self.episode_off.append(offset)
+            offset += l
+
+    def start(self):
+        pass
+
+    def ready(self):
+        return True
+
+    def delete(self):
+        return True
+
+    def get_dataset(self):
+        pass
+
+    def key(self):
+        return f'r{self.id}'
+
+    def create_episode(self):
+        if self.db.get(self.key()) is None:
+            self.db.set(self.key(), '0')
+        episode = Episode(self, self.db, int(self.db.get(self.key())))
+        self.db.incr(self.key())
+        return episode
+
+    @staticmethod
+    def find_le(a, x):
+        'Find rightmost value less than or equal to x'
+        i = bisect_right(a, x)
+        if i:
+            return i - 1
+        raise ValueError
+
+    def __getitem__(self, item):
+        episode_id = Rollout.find_le(self.episode_off, item)
+        step_i = item - self.episode_off[episode_id]
+        encoded_step = self.db.lindex(Episode.key(self.id, episode_id), step_i)
+        step = Step.decode(encoded_step, self.observation_dtype)
+        return step
+
+    def __len__(self):
+        return sum(self.episode_len)
+
+
+class Episode:
+    def __init__(self, rollout, db, id):
+        self.rollout = rollout
+        self.db = rollout, db
+        self.id = id
+
+    def end(self):
+        pass
+
+    @staticmethod
+    def key(rollout_id, episode_id):
+        return f'r{rollout_id}_e{episode_id}'
+
+    def append(self, step):
+        self.rollout.db.lpush(Episode.key(self.rollout.id, self.id), step.encode())
+
+
 class Step:
     def __init__(self, observation, action, reward, done):
         self.observation = observation
@@ -91,6 +215,22 @@ class Step:
 
     def as_tuple(self):
         return self.observation, self.action, self.reward, self.advantage
+
+    def encode(self):
+        """ encode step to bstring"""
+        o_h, o_w = self.observation.shape
+        b_ard = struct.pack('>if?II', self.action, self.reward, self.done, o_h, o_w)
+        b_o = self.observation.tobytes()
+        encoded = b_ard + b_o
+        return encoded
+
+    @staticmethod
+    def decode(encoded, obs_dtype):
+        """ decode step from bstring"""
+        len_bard = struct.calcsize('>if?II')
+        action, reward, done, o_h, o_w = struct.unpack('>if?II', encoded[:len_bard])
+        o = np.frombuffer(encoded, dtype=obs_dtype, offset=len_bard).reshape(o_h, o_w)
+        return Step(o, action, reward, done)
 
 
 class BufferedRolloutDataset(Dataset):
@@ -165,3 +305,22 @@ class BufferedRolloutDataset(Dataset):
 
     def __len__(self):
         return len(self.rollouts)
+
+
+def toRedis(r, a, n):
+    """Store given Numpy array 'a' in Redis under key 'n'"""
+    h, w = a.shape
+    shape = struct.pack('>II', h, w)
+    encoded = shape + a.tobytes()
+
+    # Store encoded data in Redis
+    r.set(n, encoded)
+    return
+
+
+def fromRedis(r, n):
+    """Retrieve Numpy array from Redis key 'n'"""
+    encoded = r.get(n)
+    h, w = struct.unpack('>II', encoded[:8])
+    a = np.frombuffer(encoded, dtype=np.uint32, offset=8).reshape(h, w)
+    return a

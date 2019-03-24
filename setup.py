@@ -9,6 +9,7 @@ setup(name='ppo',
                         'py3nvml',
                         'tensorboardX',
                         'gym-duane',
+                        'redis',
                         'opencv-python',
                         'torchvision'],
       extras_require={

@@ -4,7 +4,7 @@ import torch
 from torchvision.transforms.functional import to_tensor
 
 import data
-from data import RolloutDataSet
+from data import SingleProcessDataSet
 
 
 class Pong:
@@ -44,7 +44,7 @@ class LunarLander:
         self.players = 1
 
     def construct_dataset(self):
-        return RolloutDataSet(self)
+        return SingleProcessDataSet(self)
 
     def prepro(self, observation_t1, observation_t0):
         return observation_t1 - observation_t0
@@ -107,7 +107,7 @@ class AlphaDroneRacer:
         self.players = 1
 
     def construct_dataset(self):
-        return RolloutDataSet(self)
+        return SingleProcessDataSet(self)
 
     def prepro(self, observation_t1, observation_t0):
         return np.concatenate((observation_t1, observation_t0))
@@ -138,7 +138,7 @@ class Bouncer:
         self.players = 1
 
     def construct_dataset(self):
-        return RolloutDataSet(self)
+        return SingleProcessDataSet(self)
 
     def prepro(self, observation_t1, observation_t0):
         return np.concatenate((observation_t1, observation_t0))
