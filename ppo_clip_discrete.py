@@ -113,7 +113,7 @@ if __name__ == '__main__':
         #if env_config.adversarial:
             #rollout = rollout_adversarial_policy(policy_net, env_config)
         #else:
-        rollout = rollout_policy(config.num_rollouts, policy_net, env_config)
+        rollout = rollout_policy(config.num_rollouts, policy_net, env_config, config)
 
         dataset = RolloutDatasetBase(env_config, rollout)
 

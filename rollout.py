@@ -71,9 +71,8 @@ from util import timeit, UniImageViewer, Init
 
 
 @timeit
-def rollout_policy(num_rollouts, policy, env_config):
+def rollout_policy(num_rollouts, policy, env_config, config):
 
-    config = Init(env_config.gym_env_string)
     policy = policy.eval()
     policy = policy.to('cpu')
     db = Db()
