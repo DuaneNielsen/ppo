@@ -198,3 +198,6 @@ class Init:
         self.tb_step = 0
         self.rundir = f'runs/{name}_{random.randint(0,1000)}'
         self.tb = SummaryWriter(self.rundir)
+        self.save_freq = 1000
+        self.view_games = True
+        self.view_obs = False
