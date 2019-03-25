@@ -25,7 +25,7 @@ def ppo_loss(newprob, oldprob, advantage, clip=0.2):
     min_step = torch.stack((full_step, clipped_step), dim=1)
     min_step, clipped = torch.min(min_step, dim=1)
 
-    if debug:
+    if config.debug:
         print(f'ADVTG {advantage[0].data}')
         print(f'NEW_P {newprob[0].data}')
         print(f'OLD_P {oldprob[0].data}')
@@ -37,11 +37,11 @@ def ppo_loss(newprob, oldprob, advantage, clip=0.2):
 
 
 @timeit
-def train_policy(policy, rollout_dataset, optim, device='cpu'):
+def train_policy(policy, rollout_dataset, optim, config):
     policy = policy.train()
-    policy = policy.to(device)
+    policy = policy.to(config.device)
 
-    batches = math.floor(len(rollout_dataset) / max_minibatch_size) + 1
+    batches = math.floor(len(rollout_dataset) / config.max_minibatch_size) + 1
     batch_size = math.floor(len(rollout_dataset) / batches)
     steps_per_batch = math.floor(12 / batches) if math.floor(12 / batches) > 0 else 1
     config.tb.add_scalar('batches', batches, config.tb_step)
@@ -52,12 +52,12 @@ def train_policy(policy, rollout_dataset, optim, device='cpu'):
         batches_p += 1
         for step in range(steps_per_batch):
 
-            observation = observation.to(device)
-            advantage = advantage.float().to(device)
-            action = action.squeeze().to(device)
+            observation = observation.to(config.device)
+            advantage = advantage.float().to(config.device)
+            action = action.squeeze().to(config.device)
             optim.zero_grad()
 
-            if debug:
+            if config.debug:
                 print(f'ACT__ {action[0].data}')
 
             new_logprob = policy(observation.squeeze().view(-1, policy.features)).squeeze()
@@ -71,12 +71,12 @@ def train_policy(policy, rollout_dataset, optim, device='cpu'):
             loss.backward()
             optim.step()
 
-            if debug:
+            if config.debug:
                 updated_logprob = policy(observation.squeeze().view(-1, policy.features)).squeeze()
                 print(f'CHNGE {( torch.exp(updated_logprob) - torch.exp(new_logprob) ).data[0]}')
                 print(f'NEW_G {torch.exp(new_logprob.grad.data[0])}')
 
-            if device is 'cuda':
+            if config.device is 'cuda':
                 config.tb.add_scalar('memory_allocated', torch.cuda.memory_allocated(), config.tb_step)
                 config.tb.add_scalar('memory_cached', torch.cuda.memory_cached(), config.tb_step)
     print(f'processed {batches_p} batches')
@@ -88,6 +88,11 @@ if __name__ == '__main__':
 
     print('Starting')
 
+    #env_config = configs.AlphaDroneRacer()
+    #env_config = configs.Bouncer()
+    env_config = configs.LunarLander()
+    config = util.Init(env_config.gym_env_string)
+
     gpu_profile = False
     if gpu_profile:
         from util import gpu_profile
@@ -95,41 +100,24 @@ if __name__ == '__main__':
 
         sys.settrace(gpu_profile)
 
-    num_epochs = 6000
-    num_rollouts = 60
-    collected_rollouts = 0
-    device = 'cpu' if torch.cuda.is_available() else 'cpu'
-    max_minibatch_size = 400000
-    resume = False
-    view_games = False
-    view_obs = False
-    debug = False
-    save_freq = 1000
-    best_reward = None
-
-    #env_config = configs.AlphaDroneRacer()
-    #env_config = configs.Bouncer()
-    env_config = configs.LunarLander()
-    config = util.Init(env_config.gym_env_string)
-
     print(f'Loaded {env_config.gym_env_string}')
 
     policy_net = PPOWrap(env_config.features, env_config.action_map, env_config.hidden)
-    if resume:
+    if config.resume:
         policy_net.load_state_dict(torch.load('runs/AlphaRacer2D-v0_941/3.wgt'))
 
     optim = torch.optim.Adam(lr=1e-4, params=policy_net.new.parameters())
 
-    for epoch in range(num_epochs):
+    for epoch in range(config.num_epochs):
 
         #if env_config.adversarial:
             #rollout = rollout_adversarial_policy(policy_net, env_config)
         #else:
-        rollout = rollout_policy(num_rollouts, policy_net, env_config)
+        rollout = rollout_policy(config.num_rollouts, policy_net, env_config)
 
         dataset = RolloutDatasetBase(env_config, rollout)
 
         config.tb.add_scalar('collected_frames', len(dataset), config.tb_step)
-        train_policy(policy_net, dataset, optim, device)
+        train_policy(policy_net, dataset, optim, config)
         torch.cuda.empty_cache()
         # gpu_profile(frame=sys._getframe(), event='line', arg=None)

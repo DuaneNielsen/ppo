@@ -199,5 +199,12 @@ class Init:
         self.rundir = f'runs/{name}_{random.randint(0,1000)}'
         self.tb = SummaryWriter(self.rundir)
         self.save_freq = 1000
-        self.view_games = True
+        self.view_games = False
         self.view_obs = False
+        self.num_epochs = 6000
+        self.num_rollouts = 60
+        self.collected_rollouts = 0
+        self.device = 'cpu' if torch.cuda.is_available() else 'cpu'
+        self.max_minibatch_size = 400000
+        self.resume = False
+        self.debug = False
