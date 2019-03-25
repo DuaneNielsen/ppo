@@ -1,7 +1,9 @@
 import data
 import numpy as np
 import pytest
-
+import configs
+from statistics import mean, stdev
+from data import StepCoder, NumpyCoder
 
 def test_buffered():
     obs = np.array([0.0, 1.0, 2.0])
@@ -70,11 +72,32 @@ def test_len_get():
     assert type(bds[0][0]).__name__ == 'Tensor'
 
 
+def test_encode_numpy():
+    coder = data.NumpyCoder(1, np.float64)
+    assert coder.header_fmt == '>I'
+
+    o = np.random.rand(80)
+    encoded = coder.encode(o)
+    decoded = coder.decode(encoded)
+
+    np.testing.assert_array_equal(o, decoded)
+
+    coder = data.NumpyCoder(2, np.float64)
+    assert coder.header_fmt == '>II'
+
+    o = np.random.rand(80, 80)
+    encoded = coder.encode(o)
+    decoded = coder.decode(encoded)
+
+    np.testing.assert_array_equal(o, decoded)
+
+
 def test_encode_decode():
     o = np.random.rand(80, 80)
     s = data.Step(o, 1, 1.0, False)
-    encoded = s.encode()
-    decoded = data.Step.decode(encoded, np.float64)
+    coder = data.StepCoder(observation_coder=data.NumpyCoder(2, np.float64))
+    encoded = coder.encode(s)
+    decoded = coder.decode(encoded)
     assert s.action == decoded.action
     assert s.reward == decoded.reward
     assert s.done == decoded.done
@@ -82,15 +105,15 @@ def test_encode_decode():
 
 
 @pytest.fixture()
-def resource():
-    yield "resource"
+def db():
     db = data.Db()
+    yield db
     db.drop()
 
 
-def test_redis_write_step(resource):
-    db = data.Db()
-    rollout = db.create_rollout(np.float64)
+def test_redis_write_step(db):
+    env_config = configs.BaseConfig('test', )
+    rollout = db.create_rollout(env_config)
 
     episode = rollout.create_episode()
     o1 = np.random.rand(80, 80)
@@ -128,4 +151,128 @@ def test_redis_write_step(resource):
     step = rollout[8]
 
     np.testing.assert_array_equal(step.observation, o3)
+
+    assert len(rollout) == 9
+    assert step.reward == 1.0
+    assert step.action == 1
+
+
+def test_step_iter(db):
+    env_config = configs.BaseConfig('test')
+    rollout = db.create_rollout(env_config)
+
+    episode = rollout.create_episode()
+    o1 = np.random.rand(80, 80)
+    episode.append(data.Step(o1, 1, 1.0, False))
+    o2 = np.random.rand(80, 80)
+    episode.append(data.Step(o2, 1, 1.0, False))
+    o3 = np.random.rand(80, 80)
+    episode.append(data.Step(o3, 1, 1.0, False))
+
+    for step, o in zip(episode, [o1, o2, o3]):
+        np.testing.assert_array_equal(step.observation, o)
+
+
+def test_epi_iter(db):
+    env_config = configs.BaseConfig('test', StepCoder(observation_coder=NumpyCoder(2, dtype=np.float64)))
+    rollout = db.create_rollout(env_config)
+
+    obs = []
+
+    episode = rollout.create_episode()
+    o1 = np.random.rand(80, 80)
+    episode.append(data.Step(o1, 1, 1.0, False))
+    o2 = np.random.rand(80, 80)
+    episode.append(data.Step(o2, 1, 1.0, False))
+    o3 = np.random.rand(80, 80)
+    episode.append(data.Step(o3, 1, 1.0, False))
+    obs.append([o1, o2, o3])
+
+    episode = rollout.create_episode()
+    o4 = np.random.rand(80, 80)
+    episode.append(data.Step(o4, 1, 1.0, False))
+    o5 = np.random.rand(80, 80)
+    episode.append(data.Step(o5, 1, 1.0, False))
+    o6 = np.random.rand(80, 80)
+    episode.append(data.Step(o6, 1, 1.0, False))
+    obs.append([o4, o5, o6])
+
+    episode = rollout.create_episode()
+    o7 = np.random.rand(80, 80)
+    episode.append(data.Step(o7, 1, 1.0, False))
+    o8 = np.random.rand(80, 80)
+    episode.append(data.Step(o8, 1, 1.0, False))
+    o9 = np.random.rand(80, 80)
+    episode.append(data.Step(o9, 1, 1.0, False))
+    obs.append([o7, o8, o9])
+
+    for episode, ob in zip(rollout, obs):
+        for step, o in zip(episode, ob):
+            np.testing.assert_array_equal(step.observation, o)
+
+
+def test_advantage(db):
+    env_config = configs.BaseConfig('test_data', StepCoder(observation_coder=NumpyCoder(2, dtype=np.float64)))
+
+    rollout = db.create_rollout(env_config)
+    obs = []
+
+    episode = rollout.create_episode()
+    o1 = np.random.rand(80, 80)
+    episode.append(data.Step(o1, 1, 0.0, False))
+    o2 = np.random.rand(80, 80)
+    episode.append(data.Step(o2, 1, 0.0, False))
+    o3 = np.random.rand(80, 80)
+    episode.append(data.Step(o3, 1, 1.0, False))
+    obs.append([o1, o2, o3])
+
+    episode = rollout.create_episode()
+    o1 = np.random.rand(80, 80)
+    episode.append(data.Step(o1, 1, 0.0, False))
+    o2 = np.random.rand(80, 80)
+    episode.append(data.Step(o2, 1, 0.0, False))
+    o3 = np.random.rand(80, 80)
+    episode.append(data.Step(o3, 1, 1.0, False))
+    obs.append([o1, o2, o3])
+
+    rollout.end()
+
+    dataset = data.RolloutDatasetBase(env_config, rollout)
+
+    a = []
+    a.append(1.0 * env_config.discount_factor ** 2)
+    a.append(1.0 * env_config.discount_factor)
+    a.append(1.0)
+    a.append(1.0 * env_config.discount_factor ** 2)
+    a.append(1.0 * env_config.discount_factor)
+    a.append(1.0)
+
+    mu = mean(a)
+    sigma = stdev(a)
+
+    adv = [(vl - mu) / (sigma + 1e-12) for vl in a]
+
+    observation, action, reward, advantage = dataset[0]
+    assert reward == 0.00
+    assert advantage == adv[0]
+
+    observation, action, reward, advantage = dataset[1]
+    assert reward == 0.0
+    assert advantage == adv[1]
+
+    observation, action, reward, advantage = dataset[2]
+    assert reward == 1.0
+    assert advantage == adv[2]
+
+    observation, action, reward, advantage = dataset[3]
+    assert reward == 0.00
+    assert advantage == adv[3]
+
+    observation, action, reward, advantage = dataset[4]
+    assert reward == 0.0
+    assert advantage == adv[4]
+
+    observation, action, reward, advantage = dataset[5]
+    assert reward == 1.0
+    assert advantage == adv[5]
 

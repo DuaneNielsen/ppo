@@ -15,12 +15,14 @@ from util import UniImageViewer, timeit
 import math
 import configs
 import gym_duane
+from data import Db, Step, RolloutDatasetBase
 
 @timeit
 def rollout_adversarial_policy(policy, env_config):
     policy = policy.eval()
     policy = policy.to('cpu')
-    rollout_dataset = env_config.construct_dataset()
+    db = Db()
+    rollout = db.create_rollout(env_config)
     reward_total = 0
     env = gym.make(env_config.gym_env_string)
     v1 = UniImageViewer(env_config.gym_env_string + ' player 1', (200, 160))
@@ -39,13 +41,12 @@ def rollout_adversarial_policy(policy, env_config):
 
         while not done:
             # take an action on current observation and record result
-            observation_tensors = [rollout_dataset.transform(o) for o in observations]
+            observation_tensors = [rollout.transform(o) for o in observations]
             obs_stack = torch.stack(observation_tensors, dim=0)
             action_prob = policy(obs_stack)
             index, action = policy.sample(action_prob)
             actions = [a.item() for a in action.chunk(action.size(0), dim=0)]
             indices = [i.item() for i in index.chunk(index.size(0), dim=0)]
-
 
             observation_t1, rewards, done, info = env.step(actions)
 
@@ -54,7 +55,7 @@ def rollout_adversarial_policy(policy, env_config):
             episode_length += 1
 
             for i, (o, a, r) in enumerate(zip(observations, indices, rewards)):
-                rollout_dataset.append(o, a, r, done, episode=i)
+                rollout.append(o, a, r, done, episode=i)
 
             # compute the observation that resulted from our action
             observations = [env_config.prepro(t1, t0) for t1, t0 in zip(observation_t1, observation_t0)]
@@ -75,8 +76,8 @@ def rollout_adversarial_policy(policy, env_config):
     if epoch % 20 == 0:
         torch.save(policy.state_dict(), config.rundir + '/vanilla.wgt')
 
-    rollout_dataset.end_rollout()
-    return rollout_dataset
+    rollout.end_rollout()
+    return rollout
 
 
 @timeit
@@ -84,13 +85,15 @@ def rollout_policy(policy, env_config):
 
     policy = policy.eval()
     policy = policy.to('cpu')
-    rollout_dataset = env_config.construct_dataset()
+    db = Db()
+    rollout = db.create_rollout(env_config)
     reward_total = 0
     v = UniImageViewer(env_config.gym_env_string, (200, 160))
     env = gym.make(env_config.gym_env_string)
 
-
     for i in range(num_rollouts):
+
+        episode = rollout.create_episode()
 
         episode_length = 0
 
@@ -103,7 +106,7 @@ def rollout_policy(policy, env_config):
 
         while not done:
             # take an action on current observation and record result
-            observation_tensor = rollout_dataset.transform(observation, insert_batch=True)
+            observation_tensor = env_config.transform(observation, insert_batch=True)
             action_prob = policy(observation_tensor)
             index, action = policy.sample(action_prob)
 
@@ -113,7 +116,7 @@ def rollout_policy(policy, env_config):
             reward_total += reward
             episode_length += 1
 
-            rollout_dataset.append(observation, reward, index, done)
+            episode.append(Step(observation, index, reward, done))
 
             # compute the observation that resulted from our action
             observation = env_config.prepro(observation_t1, observation_t0)
@@ -141,8 +144,8 @@ def rollout_policy(policy, env_config):
 
     torch.save(policy.state_dict(), config.rundir + f'/latest.wgt')
 
-    rollout_dataset.normalize()
-    return rollout_dataset
+    rollout.end()
+    return rollout
 
 
 def ppo_loss(newprob, oldprob, advantage, clip=0.2):
@@ -177,7 +180,7 @@ def train_policy(policy, rollout_dataset, optim, device='cpu'):
 
     rollout_loader = DataLoader(rollout_dataset, batch_size=batch_size, shuffle=True)
     batches_p = 0
-    for i, (observation, reward, action, advantage) in enumerate(rollout_loader):
+    for i, (observation, action, reward, advantage) in enumerate(rollout_loader):
         batches_p += 1
         for step in range(steps_per_batch):
 
@@ -224,8 +227,6 @@ if __name__ == '__main__':
 
         sys.settrace(gpu_profile)
 
-
-
     num_epochs = 6000
     num_rollouts = 60
     collected_rollouts = 0
@@ -254,11 +255,13 @@ if __name__ == '__main__':
     for epoch in range(num_epochs):
 
         if env_config.adversarial:
-            rollout_dataset = rollout_adversarial_policy(policy_net, env_config)
+            rollout = rollout_adversarial_policy(policy_net, env_config)
         else:
-            rollout_dataset = rollout_policy(policy_net, env_config)
+            rollout = rollout_policy(policy_net, env_config)
 
-        config.tb.add_scalar('collected_frames', len(rollout_dataset), config.tb_step)
-        train_policy(policy_net, rollout_dataset, optim, device)
+        dataset = RolloutDatasetBase(env_config, rollout)
+
+        config.tb.add_scalar('collected_frames', len(dataset), config.tb_step)
+        train_policy(policy_net, dataset, optim, device)
         torch.cuda.empty_cache()
         # gpu_profile(frame=sys._getframe(), event='line', arg=None)

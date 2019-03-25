@@ -4,7 +4,58 @@ import torch
 from torchvision.transforms.functional import to_tensor
 
 import data
-from data import SingleProcessDataSet
+from data import SingleProcessDataSet, StepCoder, NumpyCoder
+
+
+class DefaultPrePro:
+    def __call__(self, observation_t1, observation_t0):
+        return observation_t1 - observation_t0
+
+
+class DefaultTransform:
+    def __call__(self, observation, insert_batch=False):
+        """
+        :param observation: the raw observation
+        :param insert_batch: add a batch dimension to the front
+        :return: tensor in shape (batch, dims)
+        """
+        if insert_batch:
+            return torch.from_numpy(observation).float().unsqueeze(0)
+        else:
+            return torch.from_numpy(observation).float()
+
+
+class BaseConfig:
+    def __init__(self,
+                 gym_env_string,
+                 step_coder,
+                 discount_factor=0.99,
+                 max_rollout_len=3000,
+                 prepro=DefaultPrePro(),
+                 transform=DefaultTransform(),
+                 ):
+        self.gym_env_string = gym_env_string
+        self.step_coder = step_coder
+        self.discount_factor = discount_factor
+        self.max_rollout_len = max_rollout_len
+        self.prepro = prepro
+        self.transform = transform
+
+
+class DiscreteConfig(BaseConfig):
+    def __init__(self,
+                 gym_env_string,
+                 step_coder,
+                 action_map,
+                 default_action=0,
+                 discount_factor=0.99,
+                 max_rollout_len=3000,
+                 prepro=DefaultPrePro(),
+                 transform=DefaultTransform(),
+                 ):
+        super().__init__(gym_env_string, step_coder, discount_factor, max_rollout_len, prepro, transform)
+        self.action_map = action_map
+        self.default_action = default_action
 
 
 class Pong:
@@ -30,35 +81,18 @@ class Pong:
             return to_tensor(np.expand_dims(observation, axis=2)).view(self.features)
 
 
-class LunarLander:
+class LunarLander(DiscreteConfig):
     def __init__(self):
-        self.gym_env_string = 'LunarLander-v2'
+        super().__init__(
+            gym_env_string='LunarLander-v2',
+            step_coder=StepCoder(observation_coder=NumpyCoder(1, np.float32)),
+            action_map=[0, 1, 2, 3]
+        )
         self.features = 8
         self.hidden = 8
-        self.action_map = [0, 1, 2, 3]
-        self.default_action = 0
-        self.discount_factor = 0.99
-        self.max_rollout_len = 900
         self.adversarial = False
         self.default_save = ['lunar_lander/solved.wgt']
         self.players = 1
-
-    def construct_dataset(self):
-        return SingleProcessDataSet(self)
-
-    def prepro(self, observation_t1, observation_t0):
-        return observation_t1 - observation_t0
-
-    def transform(self, observation, insert_batch=False):
-        """
-        :param observation: the raw observation
-        :param insert_batch: add a batch dimension to the front
-        :return: tensor in shape (batch, dims)
-        """
-        if insert_batch:
-            return torch.from_numpy(observation).float().unsqueeze(0)
-        else:
-            return torch.from_numpy(observation).float()
 
 
 class PongAdversarial:
@@ -82,6 +116,7 @@ class PongAdversarial:
             greyscale = cv2.cvtColor(observation, cv2.COLOR_BGR2GRAY)
             greyscale = cv2.resize(greyscale, self.downsample_image_size, cv2.INTER_LINEAR)
             return greyscale
+
         t1 = reduce(t1)
         t0 = reduce(t0)
         return t1 - t0

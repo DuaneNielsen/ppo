@@ -10,34 +10,24 @@ from bisect import bisect_right
 
 
 class RolloutDatasetAbstract(Dataset, metaclass=ABCMeta):
-    def __init__(self, env_config):
+    def __init__(self):
         """
 
         :param discount_factor:
         :param transform: transform to apply to observation
         """
         super().__init__()
-        self.episode = []
-        self.rollout = []
-        self.value = []
-        self.start = 0
-        self.discount_factor = env_config.discount_factor
-        self.transform = env_config.transform
 
     @abstractmethod
-    def advantage(self, observation, reward, action, done):
+    def advantage(self, episode):
         pass
 
+    @abstractmethod
     def normalize(self):
-        mean = statistics.mean(self.value)
-        stdev = statistics.stdev(self.value)
-        self.value = [(vl - mean) / (stdev + 1e-12) for vl in self.value]
-
-    def total_reward(self):
-        return sum([reward[1] for reward in self.rollout])
+        pass
 
     @abstractmethod
-    def transform(self, observation, insert_batch):
+    def total_reward(self):
         pass
 
     @abstractmethod
@@ -47,6 +37,56 @@ class RolloutDatasetAbstract(Dataset, metaclass=ABCMeta):
     @abstractmethod
     def __len__(self):
         pass
+
+
+class RolloutDatasetBase(RolloutDatasetAbstract):
+    def __init__(self, env_config, rollout):
+        """
+
+        :param discount_factor:
+        :param transform: transform to apply to observation
+        """
+        super().__init__()
+        self.rollout = rollout
+        self.adv = [0.0 for _ in range(len(rollout))]
+        self.start = 0
+        self.discount_factor = env_config.discount_factor
+        self.transform = env_config.transform
+
+        # calculate advantage values
+        for episode in rollout:
+            self.advantage(episode)
+        self.normalize()
+
+    def normalize(self):
+        mean = statistics.mean(self.adv)
+        stdev = statistics.stdev(self.adv)
+        self.adv = [(vl - mean) / (stdev + 1e-12) for vl in self.adv]
+
+    def advantage(self, episode):
+
+            cum_value = 0.0
+            offset = self.rollout.offset(episode)
+
+            for step in reversed(range(offset, offset + len(episode))):
+                cum_value = self.rollout[step].reward + cum_value * self.discount_factor
+                self.adv[step] = cum_value
+
+    def total_reward(self):
+        reward = 0.0
+        for episode in self.rollout:
+            for step in episode:
+                reward += step.reward
+        return reward
+
+    def __getitem__(self, item):
+        step = self.rollout[item]
+        advantage = self.adv[item]
+        t_obs = self.transform(step.observation)
+        return t_obs, step.action, step.reward, advantage
+
+    def __len__(self):
+        return len(self.rollout)
 
 
 class RedisDataset(RolloutDatasetAbstract):
@@ -73,7 +113,7 @@ class SingleProcessDataSetAbstract(RolloutDatasetAbstract):
 
     def __getitem__(self, item):
         observation, reward, action = self.rollout[item]
-        value = self.value[item]
+        value = self.adv[item]
         observation_t = self.transform(observation)
         return observation_t, reward, action, value
 
@@ -85,43 +125,32 @@ class SingleProcessDataSet(SingleProcessDataSetAbstract):
     def __init__(self, discount_factor):
         super().__init__(discount_factor)
 
-    def advantage(self, observation, reward, action, done):
-        if done:
-            values = []
-            cum_value = 0.0
-            # calculate values
-            for step in reversed(range(self.start, len(self.rollout))):
-                cum_value = self.rollout[step][1] + cum_value * self.discount_factor
-                values.append(cum_value)
-            self.value = self.value + list(reversed(values))
-            self.start = len(self.rollout)
 
-
-class PongDataset(SingleProcessDataSetAbstract):
-    def __init__(self, discount_factor, features):
-        super().__init__(discount_factor)
-        self.features = features
-
-    def advantage(self, observation, reward, action, done):
-        if reward != 0.0:
-            values = []
-            cum_value = 0.0
-            # calculate values
-            for step in reversed(range(self.start, len(self.rollout))):
-                cum_value = self.rollout[step][1] + cum_value * self.discount_factor
-                values.append(cum_value)
-            self.value = self.value + list(reversed(values))
-            self.start = len(self.rollout)
+# class PongDataset(SingleProcessDataSetAbstract):
+#     def __init__(self, discount_factor, features):
+#         super().__init__(discount_factor)
+#         self.features = features
+#
+#     def advantage(self, observation, reward, action, done):
+#         if reward != 0.0:
+#             values = []
+#             cum_value = 0.0
+#             # calculate values
+#             for step in reversed(range(self.start, len(self.episode))):
+#                 cum_value = self.episode[step].reward + cum_value * self.discount_factor
+#                 values.append(cum_value)
+#             self.value = self.value + list(reversed(values))
+#             self.start = len(self.rollout)
 
 
 class Db:
     def __init__(self, host='localhost', port=6379, db=0):
         self.db = redis.Redis(host=host, port=port, db=db)
 
-    def create_rollout(self, observation_dtype):
+    def create_rollout(self, env_config):
         if self.db.get('rollouts') is None:
             self.db.set('rollouts', '0')
-        rollout = Rollout(self.db, int(self.db.get('rollouts')), observation_dtype)
+        rollout = Rollout(self.db, int(self.db.get('rollouts')), env_config)
         self.db.incr('rollouts')
         return rollout
 
@@ -129,23 +158,26 @@ class Db:
         """clears all data from the database"""
         self.db.flushall()
 
+
 class Rollout:
-    def __init__(self, db, id, observation_dtype):
+    def __init__(self, db, id, env_config):
         self.id = id
         self.db = db
         self.episode_len = []
         self.episode_off = []
-        self.observation_dtype = observation_dtype
+        self.len = None
+        self.env_config = env_config
 
     def end(self):
-        len = int(self.db.get(self.key()))
-        for episode in range(len):
+        for episode in range(self.num_episodes()):
             self.episode_len.append(int(self.db.llen(Episode.key(self.id, episode))))
 
         offset = 0
         for l in self.episode_len:
             self.episode_off.append(offset)
             offset += l
+
+        self.len = sum(self.episode_len)
 
     def start(self):
         pass
@@ -177,21 +209,66 @@ class Rollout:
             return i - 1
         raise ValueError
 
+    def num_episodes(self):
+        """ number of episodes in a rollout """
+        return int(self.db.get(self.key()))
+
+    def offset(self, episode):
+        return self.episode_off[episode.id]
+
+    def __iter__(self):
+        return EpisodeIter(self)
+
     def __getitem__(self, item):
         episode_id = Rollout.find_le(self.episode_off, item)
         step_i = item - self.episode_off[episode_id]
         encoded_step = self.db.lindex(Episode.key(self.id, episode_id), step_i)
-        step = Step.decode(encoded_step, self.observation_dtype)
+        step = self.env_config.step_coder.decode(encoded_step)
         return step
 
     def __len__(self):
-        return sum(self.episode_len)
+        """
+        total number of steps in rollout
+        to iterate episodes, iterate over rollout object
+            for episode in rollout:
+                pass
+        """
+        return self.len
+
+
+class EpisodeIter:
+    def __init__(self, rollout):
+        self.rollout = rollout
+        self.id = 0
+        self.len = rollout.num_episodes()
+
+    def __next__(self):
+        if self.id == self.len:
+            raise StopIteration
+        episode = Episode(self.rollout, self.rollout.db, self.id)
+        self.id += 1
+        return episode
+
+
+class StepIter:
+    def __init__(self, rollout, episode):
+        self.rollout = rollout
+        self.episode = episode
+        self.index = 0
+        self.len = len(episode)
+
+    def __next__(self):
+        if self.index == self.len:
+            raise StopIteration
+        item = self.episode[self.index]
+        self.index += 1
+        return item
 
 
 class Episode:
     def __init__(self, rollout, db, id):
         self.rollout = rollout
-        self.db = rollout, db
+        self.db = db
         self.id = id
 
     def end(self):
@@ -202,7 +279,58 @@ class Episode:
         return f'r{rollout_id}_e{episode_id}'
 
     def append(self, step):
-        self.rollout.db.lpush(Episode.key(self.rollout.id, self.id), step.encode())
+        encoded = self.rollout.env_config.step_coder.encode(step)
+        self.rollout.db.rpush(Episode.key(self.rollout.id, self.id), encoded)
+
+    def __getitem__(self, item):
+        encoded_step = self.db.lindex(Episode.key(self.rollout.id, self.id), item)
+        step = self.rollout.env_config.step_coder.decode(encoded_step)
+        return step
+
+    def __len__(self):
+        return self.db.llen(Episode.key(self.rollout.id, self.id))
+
+    def __iter__(self):
+        return StepIter(self.rollout, self)
+
+
+class NumpyCoder:
+    def __init__(self, num_axes, dtype):
+        self.header_fmt = '>'
+        for _ in range(num_axes):
+            self.header_fmt += 'I'
+        self.header_size = struct.calcsize(self.header_fmt)
+        self.dtype = dtype
+
+    def encode(self, observation):
+        shape = struct.pack(self.header_fmt, *observation.shape)
+        b = observation.tobytes()
+        return shape + b
+
+    def decode(self, encoded):
+        shape = struct.unpack(self.header_fmt, encoded[:self.header_size])
+        o = np.frombuffer(encoded, dtype=self.dtype, offset=self.header_size).reshape(shape)
+        return o
+
+
+class StepCoder:
+    def __init__(self, observation_coder):
+        self.o_coder = observation_coder
+        self.header_fmt = '>if?'
+        self.header_len = struct.calcsize(self.header_fmt)
+
+    def encode(self, step):
+        """ encode step to bstring"""
+        b_ard = struct.pack(self.header_fmt, step.action, step.reward, step.done)
+        b_o = self.o_coder.encode(step.observation)
+        encoded = b_ard + b_o
+        return encoded
+
+    def decode(self, encoded):
+        """ decode step from bstring"""
+        action, reward, done = struct.unpack(self.header_fmt, encoded[:self.header_len])
+        o = self.o_coder.decode(encoded[self.header_len:])
+        return Step(o, action, reward, done)
 
 
 class Step:
@@ -210,27 +338,7 @@ class Step:
         self.observation = observation
         self.reward = reward
         self.action = action
-        self.advantage = None
         self.done = done
-
-    def as_tuple(self):
-        return self.observation, self.action, self.reward, self.advantage
-
-    def encode(self):
-        """ encode step to bstring"""
-        o_h, o_w = self.observation.shape
-        b_ard = struct.pack('>if?II', self.action, self.reward, self.done, o_h, o_w)
-        b_o = self.observation.tobytes()
-        encoded = b_ard + b_o
-        return encoded
-
-    @staticmethod
-    def decode(encoded, obs_dtype):
-        """ decode step from bstring"""
-        len_bard = struct.calcsize('>if?II')
-        action, reward, done, o_h, o_w = struct.unpack('>if?II', encoded[:len_bard])
-        o = np.frombuffer(encoded, dtype=obs_dtype, offset=len_bard).reshape(o_h, o_w)
-        return Step(o, action, reward, done)
 
 
 class BufferedRolloutDataset(Dataset):
