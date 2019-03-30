@@ -25,13 +25,10 @@ class MessageDecoder:
         d = json.loads(message['data'])
         msg = d['msg']
         if msg == 'rollout':
-            id = d['id']
-            policy = decode(d['policy'])
-            env_config = decode(d['env_config'])
-            return Rollout(id, policy, env_config)
+            return Rollout.decode(d)
 
         if msg == 'episode':
-            return Episode(d['steps'])
+            return Episode.decode(d)
 
         if msg == 'STOP':
             return Stop()
@@ -40,12 +37,10 @@ class MessageDecoder:
             return StopAll()
 
 
-
 class Message:
     def __init__(self):
         self.header = None
         self.content = None
-        self.params = None,
 
     def __equal__(self, string):
         return self.header == string
@@ -74,14 +69,18 @@ class StopAll(Message):
 
 
 class Episode(Message):
-    def __init__(self, steps):
+    def __init__(self, id, steps):
         super().__init__()
         self.header = 'episode'
+        self.id = id
         self.steps = int(steps)
-        self.params = int(steps),
 
     def encode(self):
-        self.content = f'{{"msg":"{self.header}", "steps":"{self.steps}" }}'
+        self.content = f'{{"msg":"{self.header}", "id":"{self.id}", "steps":"{self.steps}" }}'
+
+    @staticmethod
+    def decode(encoded):
+        return Episode(encoded['id'], encoded['steps'])
 
 
 class Rollout(Message):
@@ -91,12 +90,18 @@ class Rollout(Message):
         self.policy = policy
         self.env_config = env_config
         self.id = int(id)
-        self.params = int(id), policy, env_config
 
     def encode(self):
         env_pickle = encode(self.env_config)
         policy_pickle = encode(self.policy)
         self.content = f'{{"msg":"{self.header}", "id":"{self.id}", "policy":"{policy_pickle}", "env_config":"{env_pickle}" }}'
+
+    @staticmethod
+    def decode(d):
+        id = d['id']
+        policy = decode(d['policy'])
+        env_config = decode(d['env_config'])
+        return Rollout(id, policy, env_config)
 
 
 class Server:
@@ -115,7 +120,7 @@ class Server:
             msg = self.decoder.decode(message)
             callback = self.handler[msg.header]
             if callback is not None:
-                callback(*msg.params)
+                callback(msg)
 
     def main(self):
         for message in self.p.listen():
@@ -135,7 +140,7 @@ class RolloutThread(threading.Thread):
         self.r = r
 
     def run(self):
-        for _ in range(20):
+        for episode in range(20):
             print(f'rolling out {self.env_config.gym_env_string}')
             time.sleep(1)
             Episode(1000).send(self.r)
@@ -157,12 +162,12 @@ class Gatherer(Server):
         self.register('STOP', self.stop)
         self.rollout_thread = None
 
-    def rollout(self, id, policy, env_config):
-        self.rollout_thread = RolloutThread(r, id, policy, env_config)
+    def rollout(self, msg):
+        self.rollout_thread = RolloutThread(r, msg.id, msg.policy, msg.env_config)
         self.rollout_thread.start()
         print('exited rollout')
 
-    def stop(self, _):
+    def stop(self, msg):
         print('stopping')
         self.rollout_thread.stop()
         self.rollout_thread.join()
@@ -174,8 +179,8 @@ class Trainer(Server):
         self.register('episode', self.episode)
         self.steps = 0
 
-    def episode(self, steps):
-        self.steps += steps
+    def episode(self, msg):
+        self.steps += msg.steps
         print(f'got {self.steps} steps')
         if self.steps > 10000:
             print('got data... sending stop')
