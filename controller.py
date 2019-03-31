@@ -143,7 +143,7 @@ class RolloutThread(threading.Thread):
         for episode in range(20):
             print(f'rolling out {self.env_config.gym_env_string}')
             time.sleep(1)
-            Episode(1000).send(self.r)
+            Episode(episode, 1000).send(self.r)
             if self.stopped():
                 print('thread stopped, exiting')
                 break

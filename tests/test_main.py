@@ -3,7 +3,10 @@ import numpy as np
 import pytest
 import configs
 from statistics import mean, stdev
-from data import StepCoder, NumpyCoder
+from data import StepCoder, NumpyCoder, RedisSequence
+import threading
+import time
+import random
 
 def test_buffered():
     obs = np.array([0.0, 1.0, 2.0])
@@ -38,8 +41,8 @@ def populate():
     return bds
 
 
-def test_double(self):
-    bds = self.populate()
+def test_double():
+    bds = populate()
 
     # for step in bds.rollouts[0]:
     #     print(step.advantage)
@@ -112,28 +115,33 @@ def db():
 
 
 def test_redis_write_step(db):
-    env_config = configs.BaseConfig('test', )
+    env_config = configs.BaseConfig('test', data.StepCoder(data.NumpyCoder(num_axes=2, dtype=np.float)))
     rollout = db.create_rollout(env_config)
+    lookup = {}
 
     episode = rollout.create_episode()
     o1 = np.random.rand(80, 80)
     episode.append(data.Step(o1, 1, 1.0, False))
     episode.append(data.Step(o1, 1, 1.0, False))
     episode.append(data.Step(o1, 1, 1.0, False))
+    episode.end()
 
     episode = rollout.create_episode()
     o2 = np.random.rand(80, 80)
-    episode.append(data.Step(o2, 1, 1.0, False))
-    episode.append(data.Step(o2, 1, 1.0, False))
-    episode.append(data.Step(o2, 1, 1.0, False))
+    episode.append(data.Step(o1, 1, 1.0, False))
+    episode.append(data.Step(o1, 1, 1.0, False))
+    episode.append(data.Step(o1, 1, 1.0, False))
+    episode.end()
 
     episode = rollout.create_episode()
     o3 = np.random.rand(80, 80)
-    episode.append(data.Step(o3, 1, 1.0, False))
-    episode.append(data.Step(o3, 1, 1.0, False))
-    episode.append(data.Step(o3, 1, 1.0, False))
+    episode.append(data.Step(o1, 1, 1.0, False))
+    episode.append(data.Step(o1, 1, 1.0, False))
+    episode.append(data.Step(o1, 1, 1.0, False))
+    episode.end()
 
     rollout.end()
+
     step = rollout[0]
     step = rollout[1]
     step = rollout[2]
@@ -144,13 +152,13 @@ def test_redis_write_step(db):
     step = rollout[4]
     step = rollout[5]
 
-    np.testing.assert_array_equal(step.observation, o2)
+    np.testing.assert_array_equal(step.observation, o1)
 
     step = rollout[6]
     step = rollout[7]
     step = rollout[8]
 
-    np.testing.assert_array_equal(step.observation, o3)
+    np.testing.assert_array_equal(step.observation, o1)
 
     assert len(rollout) == 9
     assert step.reward == 1.0
@@ -158,7 +166,7 @@ def test_redis_write_step(db):
 
 
 def test_step_iter(db):
-    env_config = configs.BaseConfig('test')
+    env_config = configs.BaseConfig('test', data.StepCoder(data.NumpyCoder(num_axes=2, dtype=np.float)))
     rollout = db.create_rollout(env_config)
 
     episode = rollout.create_episode()
@@ -168,6 +176,8 @@ def test_step_iter(db):
     episode.append(data.Step(o2, 1, 1.0, False))
     o3 = np.random.rand(80, 80)
     episode.append(data.Step(o3, 1, 1.0, False))
+
+    assert len(episode) == 3
 
     for step, o in zip(episode, [o1, o2, o3]):
         np.testing.assert_array_equal(step.observation, o)
@@ -177,7 +187,7 @@ def test_epi_iter(db):
     env_config = configs.BaseConfig('test', StepCoder(observation_coder=NumpyCoder(2, dtype=np.float64)))
     rollout = db.create_rollout(env_config)
 
-    obs = []
+    lookup = {}
 
     episode = rollout.create_episode()
     o1 = np.random.rand(80, 80)
@@ -186,7 +196,8 @@ def test_epi_iter(db):
     episode.append(data.Step(o2, 1, 1.0, False))
     o3 = np.random.rand(80, 80)
     episode.append(data.Step(o3, 1, 1.0, False))
-    obs.append([o1, o2, o3])
+    lookup[episode.id] = [o1, o2, o3]
+    episode.end()
 
     episode = rollout.create_episode()
     o4 = np.random.rand(80, 80)
@@ -195,7 +206,8 @@ def test_epi_iter(db):
     episode.append(data.Step(o5, 1, 1.0, False))
     o6 = np.random.rand(80, 80)
     episode.append(data.Step(o6, 1, 1.0, False))
-    obs.append([o4, o5, o6])
+    lookup[episode.id] = [o4, o5, o6]
+    episode.end()
 
     episode = rollout.create_episode()
     o7 = np.random.rand(80, 80)
@@ -204,9 +216,16 @@ def test_epi_iter(db):
     episode.append(data.Step(o8, 1, 1.0, False))
     o9 = np.random.rand(80, 80)
     episode.append(data.Step(o9, 1, 1.0, False))
-    obs.append([o7, o8, o9])
+    lookup[episode.id] = [o7, o8, o9]
+    episode.end()
 
-    for episode, ob in zip(rollout, obs):
+    rollout.end()
+
+    assert len(rollout) == 9
+
+    for episode in rollout:
+        assert len(episode) == 3
+        ob = lookup[episode.id]
         for step, o in zip(episode, ob):
             np.testing.assert_array_equal(step.observation, o)
 
@@ -225,6 +244,7 @@ def test_advantage(db):
     o3 = np.random.rand(80, 80)
     episode.append(data.Step(o3, 1, 1.0, False))
     obs.append([o1, o2, o3])
+    episode.end()
 
     episode = rollout.create_episode()
     o1 = np.random.rand(80, 80)
@@ -234,6 +254,7 @@ def test_advantage(db):
     o3 = np.random.rand(80, 80)
     episode.append(data.Step(o3, 1, 1.0, False))
     obs.append([o1, o2, o3])
+    episode.end()
 
     rollout.end()
 
@@ -275,4 +296,51 @@ def test_advantage(db):
     observation, action, reward, advantage = dataset[5]
     assert reward == 1.0
     assert advantage == adv[5]
+
+
+def testRedisSequence(db):
+
+    seq = RedisSequence(db.redis, 'test')
+    assert next(seq) == 0
+    assert next(seq) == 1
+    assert next(seq) == 2
+    assert next(seq) == 3
+    seq = RedisSequence(db.redis, 'test')
+    assert next(seq) == 4
+    assert next(seq) == 5
+    seq = RedisSequence(db.redis, 'test', reset=True)
+    assert next(seq) == 0
+    assert next(seq) == 1
+
+
+def testMultiProcessRedisSquence(db):
+
+    for _ in range(10):
+        barrier = threading.Barrier(3)
+        ids = []
+
+        class TestThread(threading.Thread):
+            def __init__(self):
+                super().__init__()
+                self.seq = RedisSequence(db.redis, 'thread_test')
+
+            def run(self):
+                ids.append(next(self.seq))
+                time.sleep(random.random()/5.0)
+                ids.append(next(self.seq))
+                time.sleep(random.random()/5.0)
+                ids.append(next(self.seq))
+                barrier.wait()
+
+        t1 = TestThread()
+        t2 = TestThread()
+        t1.start()
+        t2.start()
+        barrier.wait()
+
+        for i, item in enumerate(ids):
+            ids2 = ids.copy()
+            del ids2[i]
+            for j in ids2:
+                assert j != item
 

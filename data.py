@@ -6,7 +6,32 @@ import numpy as np
 from torch.utils.data import Dataset
 import redis
 import struct
-from bisect import bisect_right
+from bisect import bisect_right, bisect_left
+import uuid
+
+
+class RedisSequence:
+    """
+    Connects and manages sequences across threads
+    """
+    def __init__(self, redis, key, reset=False):
+        self.redis = redis
+        self.key = key
+        if self.redis.get(key) is None or reset:
+            self.redis.set(key, 0)
+
+    def __iter__(self):
+        return self
+
+    def __next__(self):
+        p = self.redis.pipeline()
+        p = p.get(self.key)
+        p.incr(self.key)
+        result = p.execute()
+        return int(result[0])
+
+    def current(self):
+        return int(self.redis.get(self.key))
 
 
 class RolloutDatasetAbstract(Dataset, metaclass=ABCMeta):
@@ -89,16 +114,6 @@ class RolloutDatasetBase(RolloutDatasetAbstract):
         return len(self.rollout)
 
 
-class RedisDataset(RolloutDatasetAbstract):
-
-    def __init__(self, host='localhost', port=6379, db=0):
-        self.db = Db(host, port, db)
-        self.rollout = None
-
-    def __getitem__(self, item):
-        pass
-
-
 class SingleProcessDataSetAbstract(RolloutDatasetAbstract):
 
     def append(self, observation, reward, action, done):
@@ -145,33 +160,45 @@ class SingleProcessDataSet(SingleProcessDataSetAbstract):
 
 class Db:
     def __init__(self, host='localhost', port=6379, db=0):
-        self.db = redis.Redis(host=host, port=port, db=db)
-
-    def create_rollout(self, env_config):
-        if self.db.get('rollouts') is None:
-            self.db.set('rollouts', '0')
-        rollout = Rollout(self.db, int(self.db.get('rollouts')), env_config)
-        self.db.incr('rollouts')
-        return rollout
+        self.redis = redis.Redis(host=host, port=port, db=db)
+        self.rollout_seq = RedisSequence(self.redis, 'rollout')
 
     def drop(self):
         """clears all data from the database"""
-        self.db.flushall()
+        self.redis.flushall()
+
+    def create_rollout(self, env_config):
+        return Rollout(self.redis, env_config, next(self.rollout_seq))
 
 
 class Rollout:
-    def __init__(self, db, id, env_config):
+    def __init__(self, redis, env_config, id):
         self.id = id
-        self.db = db
-        self.episode_len = []
-        self.episode_off = []
+        self.redis = redis
+        self.episodes = None
+        self.episode_len = None
+        self.episode_off = None
         self.len = None
         self.env_config = env_config
 
     def end(self):
+        """
+        Call before you generate a dataset
+        This caches all the guids in the db at time of calling to a list
+        creating a data structure which allows for fast access by the dataset object
+        and fixing the length of the the dataset
+        """
+        self.episodes = []
+        self.episode_len = []
         for episode in range(self.num_episodes()):
-            self.episode_len.append(int(self.db.llen(Episode.key(self.id, episode))))
+            self.episodes.append(self.redis.lindex(self.key(), episode).decode())
 
+        self.episodes = sorted(self.episodes)
+
+        for episode_id in self.episodes:
+            self.episode_len.append(len(Episode(self, self.redis, episode_id)))
+
+        self.episode_off = []
         offset = 0
         for l in self.episode_len:
             self.episode_off.append(offset)
@@ -179,27 +206,11 @@ class Rollout:
 
         self.len = sum(self.episode_len)
 
-    def start(self):
-        pass
-
-    def ready(self):
-        return True
-
-    def delete(self):
-        return True
-
-    def get_dataset(self):
-        pass
+    def create_episode(self):
+        return Episode(self, self.redis, str(uuid.uuid4()))
 
     def key(self):
         return f'r{self.id}'
-
-    def create_episode(self):
-        if self.db.get(self.key()) is None:
-            self.db.set(self.key(), '0')
-        episode = Episode(self, self.db, int(self.db.get(self.key())))
-        self.db.incr(self.key())
-        return episode
 
     @staticmethod
     def find_le(a, x):
@@ -209,20 +220,39 @@ class Rollout:
             return i - 1
         raise ValueError
 
+    @staticmethod
+    def index(a, x):
+        'Locate the leftmost value exactly equal to x'
+        i = bisect_left(a, x)
+        if i != len(a) and a[i] == x:
+            return i
+        raise ValueError
+
     def num_episodes(self):
         """ number of episodes in a rollout """
-        return int(self.db.get(self.key()))
+        return self.redis.llen(self.key())
+
+    def get_index_for_episode(self, episode):
+        if self.episodes is None:
+            raise Exception
+        return Rollout.index(self.episodes, episode.id)
 
     def offset(self, episode):
-        return self.episode_off[episode.id]
+        if self.episode_off is None:
+            raise Exception
+        return self.episode_off[self.get_index_for_episode(episode)]
 
     def __iter__(self):
+        if self.episodes is None:
+            raise Exception
         return EpisodeIter(self)
 
     def __getitem__(self, item):
-        episode_id = Rollout.find_le(self.episode_off, item)
-        step_i = item - self.episode_off[episode_id]
-        encoded_step = self.db.lindex(Episode.key(self.id, episode_id), step_i)
+        if self.episodes is None:
+            raise Exception
+        index = Rollout.find_le(self.episode_off, item)
+        step_i = item - self.episode_off[index]
+        encoded_step = self.redis.lindex(self.episodes[index], step_i)
         step = self.env_config.step_coder.decode(encoded_step)
         return step
 
@@ -239,14 +269,15 @@ class Rollout:
 class EpisodeIter:
     def __init__(self, rollout):
         self.rollout = rollout
-        self.id = 0
-        self.len = rollout.num_episodes()
+        self.index = 0
+        self.len = len(rollout.episodes)
 
     def __next__(self):
-        if self.id == self.len:
+        if self.index == self.len:
             raise StopIteration
-        episode = Episode(self.rollout, self.rollout.db, self.id)
-        self.id += 1
+        uuid = self.rollout.episodes[self.index]
+        episode = Episode(self.rollout, self.rollout.redis, uuid)
+        self.index += 1
         return episode
 
 
@@ -266,29 +297,25 @@ class StepIter:
 
 
 class Episode:
-    def __init__(self, rollout, db, id):
+    def __init__(self, rollout, redis, id):
         self.rollout = rollout
-        self.db = db
+        self.redis = redis
         self.id = id
 
     def end(self):
-        pass
-
-    @staticmethod
-    def key(rollout_id, episode_id):
-        return f'r{rollout_id}_e{episode_id}'
+        self.redis.lpush(self.rollout.key(), self.id)
 
     def append(self, step):
         encoded = self.rollout.env_config.step_coder.encode(step)
-        self.rollout.db.rpush(Episode.key(self.rollout.id, self.id), encoded)
+        self.rollout.redis.rpush(self.id, encoded)
 
     def __getitem__(self, item):
-        encoded_step = self.db.lindex(Episode.key(self.rollout.id, self.id), item)
+        encoded_step = self.redis.lindex(self.id, item)
         step = self.rollout.env_config.step_coder.decode(encoded_step)
         return step
 
     def __len__(self):
-        return self.db.llen(Episode.key(self.rollout.id, self.id))
+        return self.redis.llen(self.id)
 
     def __iter__(self):
         return StepIter(self.rollout, self)
