@@ -71,7 +71,7 @@ from util import timeit, UniImageViewer, Init
 
 
 @timeit
-def rollout_policy(num_rollouts, policy, env_config, config):
+def rollout_policy(num_episodes, policy, env_config, config):
 
     policy = policy.eval()
     policy = policy.to('cpu')
@@ -82,7 +82,7 @@ def rollout_policy(num_rollouts, policy, env_config, config):
     v = UniImageViewer(env_config.gym_env_string, (200, 160))
     env = gym.make(env_config.gym_env_string)
 
-    for i in range(num_rollouts):
+    for i in range(num_episodes):
 
         episode = rollout.create_episode()
 
@@ -117,6 +117,8 @@ def rollout_policy(num_rollouts, policy, env_config, config):
                 env.render(mode='human')
             if config.view_obs:
                 v.render(observation)
+
+        episode.end()
 
         # more monitoring
         config.tb.add_scalar('reward', reward_total, config.tb_step)
