@@ -8,7 +8,8 @@ import threading
 import time
 import random
 from models import PPOWrap
-from controller import GatherThread, TrainerThread, RolloutMessage
+from controller import GatherThread, TrainerThread
+from messages import RolloutMessage
 import redis
 
 

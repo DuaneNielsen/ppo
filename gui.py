@@ -1,5 +1,6 @@
 import PySimpleGUI as sg
-from controller import ResetMessage, StopAllMessage, RolloutMessage, MessageDecoder, EpisodeMessage, MessageHandler
+from messages import StopAllMessage, ResetMessage, EpisodeMessage, RolloutMessage, MessageHandler, \
+    TrainingProgress
 from redis import Redis
 import configs
 from models import PPOWrap
@@ -43,6 +44,13 @@ def gatherer_progressbars(number):
     return pbars
 
 
+def training_progress(msg):
+    window.FindElement('trainer').UpdateBar(int(msg.steps))
+
+
+handler.register(TrainingProgress, training_progress)
+
+
 # The callback functions
 def start():
     ResetMessage(gui_uuid).send(r)
@@ -56,6 +64,7 @@ def stop():
 # Layout the design of the GUI
 layout = [
     [sg.Text('Please click a button', auto_size_text=True)],
+    [sg.ProgressBar(10000, orientation='h', size=(20, 20), key='trainer')],
     gatherer_progressbars(5),
     [sg.Button('Start'),
      sg.Button('Stop'),
