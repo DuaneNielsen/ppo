@@ -2,11 +2,14 @@ import redis
 import configs
 import time
 import threading
+import util
 
 from messages import StopMessage, StopAllMessage, ResetMessage, StoppedMessage, \
     EpisodeMessage, RolloutMessage, MessageHandler, TrainingProgress
 from models import PPOWrap
 import uuid
+import duallog
+import logging
 
 
 class Server:
@@ -29,10 +32,6 @@ class Server:
         StoppedMessage(self.id).send(self.r)
 
 
-def policy(params):
-    print(params)
-
-
 class RolloutThread(threading.Thread):
     def __init__(self, r, server_uuid, id, policy, env_config):
         super().__init__()
@@ -43,11 +42,11 @@ class RolloutThread(threading.Thread):
 
     def run(self):
         for episode in range(20):
-            print(f'rolling out {self.env_config.gym_env_string}')
+            logging.info(f'rolling out {self.env_config.gym_env_string}')
             time.sleep(1)
             EpisodeMessage(self.server_uuid, episode, 1000).send(self.r)
             if self.stopped():
-                print('thread stopped, exiting')
+                logging.info('thread stopped, exiting')
                 break
 
     def stop(self):
@@ -88,18 +87,20 @@ class Trainer(Server):
         self.handler.register(EpisodeMessage, self.episode)
         self.steps = 0
         self.env_config = env_config
+        self.config = util.Init(env_config.gym_env_string)
+        duallog.setup('logs', 'trainer')
 
     def episode(self, msg):
         if not self.stopped:
             self.steps += msg.steps
             TrainingProgress(self.id, self.steps).send(self.r)
-            print(f'got {self.steps} steps')
+            logging.info(f'got {self.steps} steps')
             if self.steps > 10000:
-                print('got data... sending stop')
+                logging.info('got data... sending stop')
                 StopMessage(self.id).send(self.r)
                 time.sleep(5)
                 policy_net = PPOWrap(self.env_config.features, self.env_config.action_map, self.env_config.hidden)
-                print('training finished')
+                logging.info('training finished')
                 self.steps = 0
                 RolloutMessage(self.id, 0, policy_net, self.env_config).send(self.r)
 

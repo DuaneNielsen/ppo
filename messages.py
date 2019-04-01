@@ -1,7 +1,7 @@
 import base64
 import json
 import pickle
-
+import logging
 
 def encode(object):
     env_pickle = pickle.dumps(object, 0)
@@ -178,7 +178,7 @@ class MessageHandler:
     def listen(self):
         """Blocking call for main loop"""
         for message in self.p.listen():
-            print(message)
+            logging.debug(message)
             self.handle(message)
 
     def checkMessage(self):
