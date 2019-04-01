@@ -14,6 +14,8 @@ from util import timeit
 import math
 import configs
 from data import RolloutDatasetBase
+import logging
+import duallog
 
 
 def ppo_loss(newprob, oldprob, advantage, clip=0.2):
@@ -25,19 +27,19 @@ def ppo_loss(newprob, oldprob, advantage, clip=0.2):
     min_step = torch.stack((full_step, clipped_step), dim=1)
     min_step, clipped = torch.min(min_step, dim=1)
 
-    if config.debug:
-        print(f'ADVTG {advantage[0].data}')
-        print(f'NEW_P {newprob[0].data}')
-        print(f'OLD_P {oldprob[0].data}')
-        print(f'RATIO {ratio[0].data}')
-        print(f'CLIP_ {clipped_step[0].data}')
+    logging.debug(f'ADVTG {advantage[0].data}')
+    logging.debug(f'NEW_P {newprob[0].data}')
+    logging.debug(f'OLD_P {oldprob[0].data}')
+    logging.debug(f'RATIO {ratio[0].data}')
+    logging.debug(f'CLIP_ {clipped_step[0].data}')
 
     min_step *= -1
     return min_step.mean()
 
 
 @timeit
-def train_policy(policy, rollout_dataset, optim, config):
+def train_policy(policy, rollout_dataset, config):
+    optim = torch.optim.Adam(lr=1e-4, params=policy.new.parameters())
     policy = policy.train()
     policy = policy.to(config.device)
 
@@ -73,14 +75,14 @@ def train_policy(policy, rollout_dataset, optim, config):
 
             if config.debug:
                 updated_logprob = policy(observation.squeeze().view(-1, policy.features)).squeeze()
-                print(f'CHNGE {( torch.exp(updated_logprob) - torch.exp(new_logprob) ).data[0]}')
+                print(f'CHNGE {(torch.exp(updated_logprob) - torch.exp(new_logprob)).data[0]}')
                 print(f'NEW_G {torch.exp(new_logprob.grad.data[0])}')
 
             if config.device is 'cuda':
                 config.tb.add_scalar('memory_allocated', torch.cuda.memory_allocated(), config.tb_step)
                 config.tb.add_scalar('memory_cached', torch.cuda.memory_cached(), config.tb_step)
-    print(f'processed {batches_p} batches')
-    if gpu_profile:
+    logging.info(f'processed {batches_p} batches')
+    if config.gpu_profile:
         gpu_profile(frame=sys._getframe(), event='line', arg=None)
 
 
@@ -88,8 +90,8 @@ if __name__ == '__main__':
 
     print('Starting')
 
-    #env_config = configs.AlphaDroneRacer()
-    #env_config = configs.Bouncer()
+    # env_config = configs.AlphaDroneRacer()
+    # env_config = configs.Bouncer()
     env_config = configs.LunarLander()
     config = util.Init(env_config.gym_env_string)
 
@@ -106,18 +108,15 @@ if __name__ == '__main__':
     if config.resume:
         policy_net.load_state_dict(torch.load('runs/AlphaRacer2D-v0_941/3.wgt'))
 
-    optim = torch.optim.Adam(lr=1e-4, params=policy_net.new.parameters())
-
     for epoch in range(config.num_epochs):
-
-        #if env_config.adversarial:
-            #rollout = rollout_adversarial_policy(policy_net, env_config)
-        #else:
+        # if env_config.adversarial:
+        # rollout = rollout_adversarial_policy(policy_net, env_config)
+        # else:
         rollout = rollout_policy(config.num_rollouts, policy_net, env_config, config)
 
         dataset = RolloutDatasetBase(env_config, rollout)
 
         config.tb.add_scalar('collected_frames', len(dataset), config.tb_step)
-        train_policy(policy_net, dataset, optim, config)
+        train_policy(policy_net, dataset, config)
         torch.cuda.empty_cache()
         # gpu_profile(frame=sys._getframe(), event='line', arg=None)

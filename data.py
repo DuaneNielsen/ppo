@@ -31,7 +31,7 @@ class RedisSequence:
         return int(result[0])
 
     def current(self):
-        return int(self.redis.get(self.key))
+        return int(self.redis.get(self.key)) - 1
 
 
 class RolloutDatasetAbstract(Dataset, metaclass=ABCMeta):
@@ -170,6 +170,16 @@ class Db:
     def create_rollout(self, env_config):
         return Rollout(self.redis, env_config, next(self.rollout_seq))
 
+    def latest_rollout(self, env_config):
+        return Rollout(self.redis, env_config, self.rollout_seq.current())
+
+    def delete_rollout(self, rollout):
+        #todo batch delete
+        for key in self.redis.scan_iter(f'rollout-{rollout.id}*'):
+            self.redis.delete(key)
+
+        self.redis.delete(rollout.key())
+
 
 class Rollout:
     def __init__(self, redis, env_config, id):
@@ -207,7 +217,7 @@ class Rollout:
         self.len = sum(self.episode_len)
 
     def create_episode(self):
-        return Episode(self, self.redis, str(uuid.uuid4()))
+        return Episode(self, self.redis, 'rollout-' + str(self.id) + '-' + str(uuid.uuid4()))
 
     def key(self):
         return f'r{self.id}'

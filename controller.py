@@ -10,6 +10,11 @@ from models import PPOWrap
 import uuid
 import duallog
 import logging
+from ppo_clip_discrete import train_policy
+from data import RolloutDatasetBase, Db
+from rollout import single_episode
+import gym
+import gym_duane
 
 
 class Server:
@@ -33,18 +38,27 @@ class Server:
 
 
 class RolloutThread(threading.Thread):
-    def __init__(self, r, server_uuid, id, policy, env_config):
+    def __init__(self, redis, server_uuid, id, policy, env_config):
         super().__init__()
         self.env_config = env_config
         self._stop_event = threading.Event()
-        self.r = r
+        self.redis = redis
+        self.db = Db()
         self.server_uuid = server_uuid
+        self.policy = policy.to('cpu').eval()
+        self.config = util.Init(env_config.gym_env_string)
+        self.env = gym.make(env_config.gym_env_string)
 
     def run(self):
-        for episode in range(20):
-            logging.info(f'starting episode {episode} of {self.env_config.gym_env_string}')
-            time.sleep(1)
-            EpisodeMessage(self.server_uuid, episode, 1000).send(self.r)
+
+        rollout = self.db.latest_rollout(self.env_config)
+        episode_number = 1
+
+        while True:
+            logging.info(f'starting episode {episode_number} of {self.env_config.gym_env_string}')
+            episode, episode_length, reward = single_episode(self.config, self.env, self.env_config, self.policy, rollout)
+            EpisodeMessage(self.server_uuid, episode_number, episode_length).send(self.redis)
+            episode_number += 1
             if self.stopped():
                 logging.info('thread stopped, exiting')
                 break
@@ -90,6 +104,9 @@ class Trainer(Server):
         self.env_config = env_config
         self.config = util.Init(env_config.gym_env_string)
         duallog.setup('logs', 'trainer')
+        self.db = Db()
+        self.policy = PPOWrap(env_config.features, env_config.action_map, env_config.hidden)
+        self.rollout = self.db.create_rollout(env_config)
 
     def episode(self, msg):
         if not self.stopped:
@@ -97,13 +114,24 @@ class Trainer(Server):
             TrainingProgress(self.id, self.steps).send(self.r)
             logging.info(f'got {self.steps} steps')
             if self.steps > 10000:
+                self.rollout.end()
+                dataset = RolloutDatasetBase(env_config, self.rollout)
+
                 logging.info('got data... sending stop')
                 StopMessage(self.id).send(self.r)
-                time.sleep(5)
-                policy_net = PPOWrap(self.env_config.features, self.env_config.action_map, self.env_config.hidden)
+
+                logging.info('started training')
+                train_policy(self.policy, dataset, self.config)
                 logging.info('training finished')
+
+                logging.info('deleting rollout')
+                self.db.delete_rollout(self.rollout)
                 self.steps = 0
-                RolloutMessage(self.id, 0, policy_net, self.env_config).send(self.r)
+                self.rollout = self.db.create_rollout(env_config)
+                logging.info('deleted rollout')
+
+                logging.info('starting next rollout')
+                RolloutMessage(self.id, self.rollout.id, self.policy, self.env_config).send(self.r)
 
     def stopAll(self, msg):
         super().stopAll(msg)

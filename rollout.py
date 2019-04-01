@@ -77,53 +77,15 @@ def rollout_policy(num_episodes, policy, env_config, config):
     policy = policy.to('cpu')
     db = Db()
     rollout = db.create_rollout(env_config)
-    reward_total = 0
-
     v = UniImageViewer(env_config.gym_env_string, (200, 160))
     env = gym.make(env_config.gym_env_string)
 
     for i in range(num_episodes):
 
-        episode = rollout.create_episode()
-
-        episode_length = 0
-
-        observation_t0 = env.reset()
-        action = env_config.default_action
-        observation_t1, reward, done, info = env.step(action)
-        observation = env_config.prepro(observation_t1, observation_t0)
-        observation_t0 = observation_t1
-        done = False
-
-        while not done:
-            # take an action on current observation and record result
-            observation_tensor = env_config.transform(observation, insert_batch=True)
-            action_prob = policy(observation_tensor)
-            index, action = policy.sample(action_prob)
-
-            observation_t1, reward, done, info = env.step(action.squeeze().item())
-
-            done = done or episode_length > env_config.max_rollout_len
-            reward_total += reward
-            episode_length += 1
-
-            episode.append(Step(observation, index, reward, done))
-
-            # compute the observation that resulted from our action
-            observation = env_config.prepro(observation_t1, observation_t0)
-            observation_t0 = observation_t1
-
-            if config.view_games:
-                env.render(mode='human')
-            if config.view_obs:
-                v.render(observation)
-
-        episode.end()
+        episode, episode_length, reward = single_episode(config, env, env_config, policy, rollout)
 
         # more monitoring
-        config.tb.add_scalar('reward', reward_total, config.tb_step)
-        reward_total = 0
-
+        config.tb.add_scalar('reward', reward, config.tb_step)
         config.tb.add_scalar('epi_len', episode_length, config.tb_step)
         config.tb_step += 1
 
@@ -131,3 +93,40 @@ def rollout_policy(num_episodes, policy, env_config, config):
 
     rollout.end()
     return rollout
+
+
+def single_episode(config, env, env_config, policy, rollout, v=None):
+    reward_total = 0
+    episode = rollout.create_episode()
+    episode_length = 0
+    observation_t0 = env.reset()
+    action = env_config.default_action
+    observation_t1, reward, done, info = env.step(action)
+    observation = env_config.prepro(observation_t1, observation_t0)
+    observation_t0 = observation_t1
+    done = False
+    while not done:
+        # take an action on current observation and record result
+        observation_tensor = env_config.transform(observation, insert_batch=True)
+        action_prob = policy(observation_tensor)
+        index, action = policy.sample(action_prob)
+
+        observation_t1, reward, done, info = env.step(action.squeeze().item())
+
+        done = done or episode_length > env_config.max_rollout_len
+        reward_total += reward
+        episode_length += 1
+
+        episode.append(Step(observation, index, reward, done))
+
+        # compute the observation that resulted from our action
+        observation = env_config.prepro(observation_t1, observation_t0)
+        observation_t0 = observation_t1
+
+        if v and config.view_games:
+            env.render(mode='human')
+        if v and config.view_obs:
+            v.render(observation)
+
+    episode.end()
+    return episode, episode_length, reward_total

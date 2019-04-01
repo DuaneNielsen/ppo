@@ -42,10 +42,10 @@ def episode(msg):
 handler.register(EpisodeMessage, episode)
 
 
-def gatherer_progressbars(number):
+def gatherer_progressbars(number, max_episodes):
     pbars = []
     for i in range(number):
-        pbars.append(sg.ProgressBar(10, orientation='v', size=(20, 20), key='gatherer' + str(i)))
+        pbars.append(sg.ProgressBar(max_episodes, orientation='v', size=(20, 20), key='gatherer' + str(i)))
     return pbars
 
 
@@ -70,7 +70,7 @@ def stop():
 layout = [
     [sg.Text('Please click a button', auto_size_text=True)],
     [sg.ProgressBar(10000, orientation='h', size=(20, 20), key='trainer')],
-    gatherer_progressbars(5),
+    gatherer_progressbars(5, 40),
     [sg.Button('Start'),
      sg.Button('Stop'),
      sg.Quit()]

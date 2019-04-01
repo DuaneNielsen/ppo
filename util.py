@@ -190,6 +190,7 @@ class Init:
     def __init__(self, name):
         self.print_tensor_sizes = True
         self.last_tensor_sizes = set()
+        self.gpu_profile = False
         self.gpu_profile_fn = f'{datetime.datetime.now():%d-%b-%y-%H-%M-%S}-gpu_mem_prof.txt'
         self.lineno = None
         self.func_name = None
@@ -208,3 +209,4 @@ class Init:
         self.max_minibatch_size = 400000
         self.resume = False
         self.debug = False
+
