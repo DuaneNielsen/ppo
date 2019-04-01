@@ -42,7 +42,7 @@ class RolloutThread(threading.Thread):
 
     def run(self):
         for episode in range(20):
-            logging.info(f'rolling out {self.env_config.gym_env_string}')
+            logging.info(f'starting episode {episode} of {self.env_config.gym_env_string}')
             time.sleep(1)
             EpisodeMessage(self.server_uuid, episode, 1000).send(self.r)
             if self.stopped():
@@ -62,6 +62,7 @@ class Gatherer(Server):
         self.handler.register(RolloutMessage, self.rollout)
         self.handler.register(StopMessage, self.stop)
         self.rollout_thread = None
+        duallog.setup('logs', f'gatherer-{self.id}-')
 
     def rollout(self, msg):
         if not self.stopped:

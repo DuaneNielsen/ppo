@@ -11,6 +11,12 @@ import uuid
 # caller intentionally.  The underlying implementation actually does use
 # tkinter callbacks.  They are simply hidden from the user.
 
+import logging
+import duallog
+
+duallog.setup('logs', 'gui')
+
+
 r = Redis()
 
 env_config = configs.LunarLander()
@@ -25,7 +31,6 @@ handler = MessageHandler(r, 'rollout')
 
 def episode(msg):
     global next_free_slot
-    print(msg.server_uuid, msg.id)
 
     if msg.server_uuid not in gatherers:
         gatherers[msg.server_uuid] = 'gatherer' + str(next_free_slot)
