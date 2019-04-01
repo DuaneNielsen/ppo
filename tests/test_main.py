@@ -7,6 +7,10 @@ from data import StepCoder, NumpyCoder, RedisSequence
 import threading
 import time
 import random
+from models import PPOWrap
+from controller import GatherThread, TrainerThread, RolloutMessage
+import redis
+
 
 def test_buffered():
     obs = np.array([0.0, 1.0, 2.0])
@@ -343,4 +347,24 @@ def testMultiProcessRedisSquence(db):
             del ids2[i]
             for j in ids2:
                 assert j != item
+
+
+def testGatherers():
+    env_config = configs.LunarLander()
+    policy_net = PPOWrap(env_config.features, env_config.action_map, env_config.hidden)
+
+    t1 = TrainerThread()
+    g1 = GatherThread()
+
+    t1.start()
+    g1.start()
+
+    r = redis.Redis()
+
+    RolloutMessage(0, policy_net, env_config).send(r)
+
+    time.sleep(10)
+
+    t1.join()
+    g1.join()
 
