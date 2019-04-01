@@ -24,6 +24,7 @@ policy_net = PPOWrap(env_config.features, env_config.action_map, env_config.hidd
 gui_uuid = uuid.uuid4()
 
 gatherers = {}
+gatherers_progress = {}
 next_free_slot = 0
 
 handler = MessageHandler(r, 'rollout')
@@ -34,9 +35,14 @@ def episode(msg):
 
     if msg.server_uuid not in gatherers:
         gatherers[msg.server_uuid] = 'gatherer' + str(next_free_slot)
+        gatherers_progress[msg.server_uuid] = 0
         next_free_slot += 1
 
-    window.FindElement(gatherers[msg.server_uuid]).UpdateBar(int(msg.id))
+    if int(msg.id) == 1:
+        gatherers_progress[msg.server_uuid] = 0
+    else:
+        gatherers_progress[msg.server_uuid] += int(msg.steps)
+    window.FindElement(gatherers[msg.server_uuid]).UpdateBar(gatherers_progress[msg.server_uuid])
 
 
 handler.register(EpisodeMessage, episode)
@@ -70,7 +76,7 @@ def stop():
 layout = [
     [sg.Text('Please click a button', auto_size_text=True)],
     [sg.ProgressBar(10000, orientation='h', size=(20, 20), key='trainer')],
-    gatherer_progressbars(5, 40),
+    gatherer_progressbars(5, 10000),
     [sg.Button('Start'),
      sg.Button('Stop'),
      sg.Quit()]
