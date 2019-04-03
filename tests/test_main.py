@@ -170,6 +170,64 @@ def test_redis_write_step(db):
     assert step.action == 1
 
 
+def test_epi_batching(db):
+    env_config = configs.BaseConfig('test', data.StepCoder(data.NumpyCoder(num_axes=2, dtype=np.float)))
+    rollout = db.create_rollout(env_config)
+    episode = rollout.create_episode()
+
+    for _ in range(3):
+
+        o1 = np.random.rand(80, 80)
+        episode.append(data.Step(o1, 1, 1.0, False), batch=10)
+        o2 = np.random.rand(80, 80)
+        episode.append(data.Step(o2, 1, 1.0, False), batch=10)
+        o3 = np.random.rand(80, 80)
+        episode.append(data.Step(o3, 1, 1.0, False), batch=10)
+
+    assert len(episode) == 0
+    episode.append(data.Step(o3, 1, 1.0, False), batch=10)
+    assert len(episode) == 10
+
+    episode = rollout.create_episode()
+    for _ in range(3):
+
+        o1 = np.random.rand(80, 80)
+        episode.append(data.Step(o1, 1, 1.0, False), batch=10)
+        o2 = np.random.rand(80, 80)
+        episode.append(data.Step(o2, 1, 1.0, False), batch=10)
+        o3 = np.random.rand(80, 80)
+        episode.append(data.Step(o3, 1, 1.0, False), batch=10)
+
+    episode.end()
+
+    assert len(episode) == 9
+
+
+def test_epi_total_reward(db):
+    env_config = configs.BaseConfig('test', data.StepCoder(data.NumpyCoder(num_axes=2, dtype=np.float)))
+    rollout = db.create_rollout(env_config)
+    episode = rollout.create_episode()
+
+    assert episode.total_reward() == 0
+
+    o1 = np.random.rand(80, 80)
+    episode.append(data.Step(o1, 1, 1.0, False))
+
+    assert episode.total_reward() == 1.0
+
+    o2 = np.random.rand(80, 80)
+    episode.append(data.Step(o2, 1, 1.0, False))
+
+    assert episode.total_reward() == 2.0
+
+    o3 = np.random.rand(80, 80)
+    episode.append(data.Step(o3, 1, 1.0, False))
+
+    assert episode.total_reward() == 3.0
+
+
+
+
 def test_step_iter(db):
     env_config = configs.BaseConfig('test', data.StepCoder(data.NumpyCoder(num_axes=2, dtype=np.float)))
     rollout = db.create_rollout(env_config)
@@ -181,6 +239,7 @@ def test_step_iter(db):
     episode.append(data.Step(o2, 1, 1.0, False))
     o3 = np.random.rand(80, 80)
     episode.append(data.Step(o3, 1, 1.0, False))
+    episode.end()
 
     assert len(episode) == 3
 
@@ -233,6 +292,7 @@ def test_epi_iter(db):
         ob = lookup[episode.id]
         for step, o in zip(episode, ob):
             np.testing.assert_array_equal(step.observation, o)
+
 
 
 def test_advantage(db):

@@ -2,7 +2,9 @@ import gym
 import torch
 
 from data import Db, Step
-from util import timeit, UniImageViewer, Init
+from util import timeit, UniImageViewer
+from configs import Init
+
 
 # @timeit
 # def rollout_adversarial_policy(policy, env_config, epoch):
@@ -82,11 +84,11 @@ def rollout_policy(num_episodes, policy, env_config, config):
 
     for i in range(num_episodes):
 
-        episode, episode_length, reward = single_episode(config, env, env_config, policy, rollout)
+        episode = single_episode(env, env_config, policy, rollout)
 
         # more monitoring
-        config.tb.add_scalar('reward', reward, config.tb_step)
-        config.tb.add_scalar('epi_len', episode_length, config.tb_step)
+        config.tb.add_scalar('reward', episode.total_reward(), config.tb_step)
+        config.tb.add_scalar('epi_len', len(episode), config.tb_step)
         config.tb_step += 1
 
     torch.save(policy.state_dict(), config.rundir + f'/latest.wgt')
@@ -95,15 +97,31 @@ def rollout_policy(num_episodes, policy, env_config, config):
     return rollout
 
 
-def single_episode(config, env, env_config, policy, rollout, v=None):
-    reward_total = 0
-    episode = rollout.create_episode()
+def single_episode(env, env_config, policy, rollout=None, v=None, render=False, display_observation=False):
+
+    """
+
+    :param config: The General configuration
+    :param env: The simulator, reset will be called at the start of each episode
+    :param env_config: the simulator configuration
+    :param policy: the policy to run
+    :param rollout: the rollout data structure to capture experience into
+    :param v: an object with a render method for displaying images
+    :param render: if True, env.render will be called for each step
+    :param display_observation: if true, v.render(observation) will be called for each step
+    :return:
+    """
+
+    episode = None
+    if rollout is not None:
+        episode = rollout.create_episode()
     episode_length = 0
     observation_t0 = env.reset()
     action = env_config.default_action
     observation_t1, reward, done, info = env.step(action)
     observation = env_config.prepro(observation_t1, observation_t0)
     observation_t0 = observation_t1
+
     done = False
     while not done:
         # take an action on current observation and record result
@@ -114,19 +132,19 @@ def single_episode(config, env, env_config, policy, rollout, v=None):
         observation_t1, reward, done, info = env.step(action.squeeze().item())
 
         done = done or episode_length > env_config.max_rollout_len
-        reward_total += reward
-        episode_length += 1
 
-        episode.append(Step(observation, index, reward, done))
+        if episode is not None:
+            episode.append(Step(observation, index, reward, done), env_config.episode_batch_size)
 
         # compute the observation that resulted from our action
         observation = env_config.prepro(observation_t1, observation_t0)
         observation_t0 = observation_t1
 
-        if v and config.view_games:
+        if render:
             env.render(mode='human')
-        if v and config.view_obs:
+        if display_observation:
             v.render(observation)
 
-    episode.end()
-    return episode, episode_length, reward_total
+    if episode is not None:
+        episode.end()
+    return episode

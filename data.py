@@ -311,13 +311,32 @@ class Episode:
         self.rollout = rollout
         self.redis = redis
         self.id = id
+        self.total_reward_key = self.id + '_total_reward'
+        self.batch = 0
+        self.p = None
+        self.redis.set(self.total_reward_key, 0.0)
 
     def end(self):
+        if self.p is not None:
+            self.p.execute()
         self.redis.lpush(self.rollout.key(), self.id)
 
-    def append(self, step):
+    def total_reward(self):
+        return float(self.redis.get(self.total_reward_key))
+
+    def append(self, step, batch=1):
         encoded = self.rollout.env_config.step_coder.encode(step)
-        self.rollout.redis.rpush(self.id, encoded)
+        self.batch += 1
+        if self.p is None:
+            self.p = self.redis.pipeline()
+
+        self.p.rpush(self.id, encoded)
+        if step.reward != 0:
+            self.p.incrbyfloat(self.total_reward_key, step.reward)
+
+        if self.batch % batch == 0:
+            self.p.execute()
+            self.p = None
 
     def __getitem__(self, item):
         encoded_step = self.redis.lindex(self.id, item)

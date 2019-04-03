@@ -3,6 +3,7 @@ import json
 import pickle
 import logging
 
+
 def encode(object):
     env_pickle = pickle.dumps(object, 0)
     return base64.b64encode(env_pickle).decode()
@@ -115,13 +116,14 @@ class TrainingProgress(Message):
 
 
 class EpisodeMessage(Message):
-    def __init__(self, server_uuid, id, steps):
+    def __init__(self, server_uuid, id, steps, total_reward):
         super().__init__(server_uuid)
         self.id = id
         self.steps = int(steps)
+        self.total_reward = float(total_reward)
 
     def encode(self):
-        self.content = f'{{ {self._header_content}, "id":"{self.id}", "steps":"{self.steps}" }}'
+        self.content = f'{{ {self._header_content}, "id":"{self.id}", "steps":"{self.steps}", "total_reward":"{self.total_reward}"}}'
 
     @classmethod
     def header(cls):
@@ -129,7 +131,7 @@ class EpisodeMessage(Message):
 
     @classmethod
     def decode(cls, encoded):
-        return EpisodeMessage(encoded['server_uuid'], encoded['id'], encoded['steps'])
+        return EpisodeMessage(encoded['server_uuid'], encoded['id'], encoded['steps'], encoded['total_reward'])
 
 
 class RolloutMessage(Message):

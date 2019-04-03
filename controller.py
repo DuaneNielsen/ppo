@@ -15,6 +15,7 @@ from data import RolloutDatasetBase, Db
 from rollout import single_episode
 import gym
 import gym_duane
+from tensorboardX import SummaryWriter
 
 
 class Server:
@@ -25,6 +26,7 @@ class Server:
         self.stopped = False
         self.handler.register(ResetMessage, self.reset)
         self.handler.register(StopAllMessage, self.stopAll)
+        self.config = configs.Init()
 
     def main(self):
         self.handler.listen()
@@ -38,7 +40,7 @@ class Server:
 
 
 class RolloutThread(threading.Thread):
-    def __init__(self, redis, server_uuid, id, policy, env_config):
+    def __init__(self, redis, server_uuid, policy, env_config, num_episodes=10000):
         super().__init__()
         self.env_config = env_config
         self._stop_event = threading.Event()
@@ -46,19 +48,19 @@ class RolloutThread(threading.Thread):
         self.db = Db()
         self.server_uuid = server_uuid
         self.policy = policy.to('cpu').eval()
-        self.config = util.Init(env_config.gym_env_string)
         self.env = gym.make(env_config.gym_env_string)
+        self.num_episodes = num_episodes
 
     def run(self):
 
+        # todo not sure about this way of getting the rollout, might add to a stale rollout by accident
         rollout = self.db.latest_rollout(self.env_config)
-        episode_number = 1
 
-        while True:
+        for episode_number in range(1, self.num_episodes+1):
             logging.info(f'starting episode {episode_number} of {self.env_config.gym_env_string}')
-            episode, episode_length, reward = single_episode(self.config, self.env, self.env_config, self.policy, rollout)
-            EpisodeMessage(self.server_uuid, episode_number, episode_length).send(self.redis)
-            episode_number += 1
+            episode = single_episode(self.env, self.env_config, self.policy, rollout)
+            EpisodeMessage(self.server_uuid, episode_number, len(episode), episode.total_reward()).send(self.redis)
+
             if self.stopped():
                 logging.info('thread stopped, exiting')
                 break
@@ -80,7 +82,7 @@ class Gatherer(Server):
 
     def rollout(self, msg):
         if not self.stopped:
-            self.rollout_thread = RolloutThread(self.r, self.id, msg.id, msg.policy, msg.env_config)
+            self.rollout_thread = RolloutThread(self.r, self.id, msg.policy, msg.env_config)
             self.rollout_thread.start()
 
     def _stop(self):
@@ -96,13 +98,59 @@ class Gatherer(Server):
         super().stopAll(msg)
 
 
+class DemoThread(threading.Thread):
+    def __init__(self, policy, env_config, env, num_episodes=1):
+        super().__init__()
+        self.env_config = env_config
+        self._stop_event = threading.Event()
+        self.policy = policy.to('cpu').eval()
+        self.num_episodes = num_episodes
+        self.env = env
+
+    def run(self):
+
+        for episode_number in range(self.num_episodes):
+            logging.info(f'starting episode {episode_number} of {self.env_config.gym_env_string}')
+            single_episode(self.env, self.env_config, self.policy, render=True)
+
+            if self.stopped():
+                logging.info('thread stopped, exiting')
+                break
+
+    def stop(self):
+        self._stop_event.set()
+
+    def stopped(self):
+        return self._stop_event.is_set()
+
+
+class DemoListener(Server):
+    def __init__(self):
+        super().__init__()
+        self.handler.register(RolloutMessage, self.rollout)
+        self.latest_policy = None
+        self.demo_thread = None
+        self.env = None
+        duallog.setup('logs', f'gatherer-{self.id}-')
+
+    def rollout(self, msg):
+        if self.env:
+            self.env.reset()
+        else:
+            self.env = gym.make(env_config.gym_env_string)
+        self.latest_policy = msg.policy
+        if self.demo_thread is None or not self.demo_thread.isAlive():
+            self.demo_thread = DemoThread(msg.policy, msg.env_config, self.env)
+            self.demo_thread.start()
+
+
 class Trainer(Server):
-    def __init__(self, env_config):
+    def __init__(self):
         super().__init__()
         self.handler.register(EpisodeMessage, self.episode)
         self.steps = 0
-        self.env_config = env_config
-        self.config = util.Init(env_config.gym_env_string)
+        self.env_config = configs.LunarLander()
+        self.config = configs.Init()
         duallog.setup('logs', 'trainer')
         self.db = Db()
         self.policy = PPOWrap(env_config.features, env_config.action_map, env_config.hidden)
@@ -138,6 +186,27 @@ class Trainer(Server):
         self.steps = 0
 
 
+class TensorBoardListener(Server):
+    def __init__(self):
+        super().__init__()
+        self.env_config = configs.LunarLander()
+        self.handler.register(EpisodeMessage, self.episode)
+        self.handler.register(StopAllMessage, self.stopAll)
+        self.tb_step = 0
+        self.tb = self.config.getSummaryWriter(env_config.gym_env_string)
+
+    def episode(self, msg):
+        self.tb.add_scalar('reward', msg.total_reward, self.tb_step)
+        self.tb.add_scalar('epi_len', msg.steps, self.tb_step)
+        self.tb_step += 1
+
+    def stopAll(self, msg):
+        self.tb_step = 0
+        self.tb = self.config.getSummaryWriter(env_config.gym_env_string)
+
+
+
+
 class GatherThread(threading.Thread):
     def run(self):
         s = Gatherer()
@@ -146,7 +215,7 @@ class GatherThread(threading.Thread):
 
 class TrainerThread(threading.Thread):
     def run(self):
-        s = Trainer(env_config)
+        s = Trainer()
         s.main()
 
 
@@ -158,6 +227,10 @@ if __name__ == '__main__':
     group.add_argument("-t", "--trainer", help="start a training instance",
                        action="store_true")
     group.add_argument("-g", "--gatherer", help="start a gathering instance",
+                       action="store_true")
+    group.add_argument("-m", "--monitor", help="start a monitoring instance",
+                       action="store_true")
+    group.add_argument("-d", "--demo", help="start a demo instance",
                        action="store_true")
     group.add_argument("--start", help="start training",
                        action="store_true")
@@ -171,35 +244,21 @@ if __name__ == '__main__':
     r = redis.Redis()
 
     if args.trainer:
-        trainer = Trainer(env_config)
+        trainer = Trainer()
         trainer.main()
     elif args.gatherer:
-        getherer = Gatherer()
-        getherer.main()
+        gatherer = Gatherer()
+        gatherer.main()
+    elif args.monitor:
+        tb = TensorBoardListener()
+        tb.main()
+
+    elif args.demo:
+        demo = DemoListener()
+        demo.main()
+
     elif args.start:
-        ResetMessage().send(r)
+        ResetMessage(uuid.uuid4()).send(r)
         RolloutMessage(0, policy_net, env_config).send(r)
     elif args.stopall:
-        StopAllMessage().send(r)
-
-
-
-
-
-
-    #
-    # t1 = TrainerThread()
-    # g1 = GatherThread()
-    #
-    # t1.start()
-    # g1.start()
-    #
-    # r = redis.Redis()
-    #
-    # RolloutMessage(0, policy_net, env_config).send(r)
-    #
-    # time.sleep(20)
-    #
-    # StopAllMessage().send(r)
-    #
-    # time.sleep(3)
+        StopAllMessage(uuid.uuid4()).send(r)

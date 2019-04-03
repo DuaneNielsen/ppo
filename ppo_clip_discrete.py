@@ -46,7 +46,7 @@ def train_policy(policy, rollout_dataset, config):
     batches = math.floor(len(rollout_dataset) / config.max_minibatch_size) + 1
     batch_size = math.floor(len(rollout_dataset) / batches)
     steps_per_batch = math.floor(12 / batches) if math.floor(12 / batches) > 0 else 1
-    config.tb.add_scalar('batches', batches, config.tb_step)
+    #config.tb.add_scalar('batches', batches, config.tb_step)
 
     rollout_loader = DataLoader(rollout_dataset, batch_size=batch_size, shuffle=True)
     batches_p = 0
@@ -78,9 +78,9 @@ def train_policy(policy, rollout_dataset, config):
                 print(f'CHNGE {(torch.exp(updated_logprob) - torch.exp(new_logprob)).data[0]}')
                 print(f'NEW_G {torch.exp(new_logprob.grad.data[0])}')
 
-            if config.device is 'cuda':
-                config.tb.add_scalar('memory_allocated', torch.cuda.memory_allocated(), config.tb_step)
-                config.tb.add_scalar('memory_cached', torch.cuda.memory_cached(), config.tb_step)
+            # if config.device is 'cuda':
+            #     config.tb.add_scalar('memory_allocated', torch.cuda.memory_allocated(), config.tb_step)
+            #     config.tb.add_scalar('memory_cached', torch.cuda.memory_cached(), config.tb_step)
     logging.info(f'processed {batches_p} batches')
     if config.gpu_profile:
         gpu_profile(frame=sys._getframe(), event='line', arg=None)
@@ -93,7 +93,7 @@ if __name__ == '__main__':
     # env_config = configs.AlphaDroneRacer()
     # env_config = configs.Bouncer()
     env_config = configs.LunarLander()
-    config = util.Init(env_config.gym_env_string)
+    config = configs.Init(env_config.gym_env_string)
 
     gpu_profile = False
     if gpu_profile:
