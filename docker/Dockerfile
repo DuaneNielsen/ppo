@@ -32,12 +32,6 @@ RUN pip3 install gym[box2d]
 RUN pip3 install gym[classic_control]
 RUN pip3 install gym[atari]
 
-# ray requires the below env variables for python 3
-ENV LC_ALL "C.UTF-8"
-ENV LANG "C.UTF-8"
-RUN pip3 install psutil
-RUN pip3 install ray
-
 # torch on linux with CUDA 10
 RUN pip3 install https://download.pytorch.org/whl/cu100/torch-1.0.1.post2-cp36-cp36m-linux_x86_64.whl
 RUN pip3 install torchvision
