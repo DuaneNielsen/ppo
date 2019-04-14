@@ -168,10 +168,10 @@ class Db:
         self.redis.flushall()
 
     def create_rollout(self, env_config):
-        return Rollout(self.redis, env_config, next(self.rollout_seq))
+        return RedisRollout(self.redis, env_config, next(self.rollout_seq))
 
     def latest_rollout(self, env_config):
-        return Rollout(self.redis, env_config, self.rollout_seq.current())
+        return RedisRollout(self.redis, env_config, self.rollout_seq.current())
 
     def delete_rollout(self, rollout):
         #todo batch delete
@@ -181,7 +181,7 @@ class Db:
         self.redis.delete(rollout.key())
 
 
-class Rollout:
+class RedisRollout:
     def __init__(self, redis, env_config, id):
         self.id = id
         self.redis = redis
@@ -245,7 +245,7 @@ class Rollout:
     def get_index_for_episode(self, episode):
         if self.episodes is None:
             raise Exception
-        return Rollout.index(self.episodes, episode.id)
+        return RedisRollout.index(self.episodes, episode.id)
 
     def offset(self, episode):
         if self.episode_off is None:
@@ -260,7 +260,7 @@ class Rollout:
     def __getitem__(self, item):
         if self.episodes is None:
             raise Exception
-        index = Rollout.find_le(self.episode_off, item)
+        index = RedisRollout.find_le(self.episode_off, item)
         step_i = item - self.episode_off[index]
         encoded_step = self.redis.lindex(self.episodes[index], step_i)
         step = self.env_config.step_coder.decode(encoded_step)

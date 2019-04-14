@@ -45,6 +45,32 @@ class BaseConfig:
         self.prepro = prepro
         self.transform = transform
         self.episode_batch_size = 10
+        self.experience_threads = 30
+        self.print_tensor_sizes = True
+        self.last_tensor_sizes = set()
+        self.gpu_profile = False
+        self.gpu_profile_fn = f'{datetime.datetime.now():%d-%b-%y-%H-%M-%S}-gpu_mem_prof.txt'
+        self.lineno = None
+        self.func_name = None
+        self.filename = None
+        self.module_name = None
+        self.tb_step = 0
+        self.save_freq = 1000
+        self.view_games = False
+        self.view_obs = False
+        self.num_epochs = 6000
+        self.num_rollouts = 60
+        self.collected_rollouts = 0
+        self.device = 'cpu' if torch.cuda.is_available() else 'cpu'
+        self.max_minibatch_size = 400000
+        self.resume = False
+        self.debug = False
+
+    def rundir(self, name='default'):
+        return f'runs/{name}_{random.randint(0,1000)}'
+
+    def getSummaryWriter(self, name='default'):
+        return SummaryWriter(self.rundir(name))
 
 
 class DiscreteConfig(BaseConfig):
@@ -193,33 +219,3 @@ class Bouncer:
             return torch.from_numpy(observation).float().unsqueeze(0)
         else:
             return torch.from_numpy(observation).float()
-
-
-class Init:
-    def __init__(self):
-        self.print_tensor_sizes = True
-        self.last_tensor_sizes = set()
-        self.gpu_profile = False
-        self.gpu_profile_fn = f'{datetime.datetime.now():%d-%b-%y-%H-%M-%S}-gpu_mem_prof.txt'
-        self.lineno = None
-        self.func_name = None
-        self.filename = None
-        self.module_name = None
-        self.tb_step = 0
-        self.save_freq = 1000
-        self.view_games = False
-        self.view_obs = False
-        self.num_epochs = 6000
-        self.num_rollouts = 60
-        self.collected_rollouts = 0
-        self.device = 'cpu' if torch.cuda.is_available() else 'cpu'
-        self.max_minibatch_size = 400000
-        self.resume = False
-        self.debug = False
-
-    def rundir(self, name='default'):
-        return f'runs/{name}_{random.randint(0,1000)}'
-
-    def getSummaryWriter(self, name='default'):
-        return SummaryWriter(self.rundir(name))
-

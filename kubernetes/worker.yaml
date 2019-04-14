@@ -1,0 +1,32 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ray-worker
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      component: ray-worker
+      type: ray
+  template:
+    metadata:
+      labels:
+        component: ray-worker
+        type: ray
+    spec:
+      containers:
+        - name: ray-worker
+          image: 127.0.0.1:32000/blade
+          command: ["/bin/bash", "-c", "--"]
+          args: ["ray start --node-ip-address=$MY_POD_IP --redis-address=ray-head.default:6379 --object-manager-port=12345 --node-manager-port=12346 --load-code-from-local --block"]
+          ports:
+            - containerPort: 12345
+            - containerPort: 12346
+          env:
+            - name: MY_POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          resources:
+            limits:
+              cpu: 2

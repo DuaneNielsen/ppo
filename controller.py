@@ -26,7 +26,6 @@ class Server:
         self.stopped = False
         self.handler.register(ResetMessage, self.reset)
         self.handler.register(StopAllMessage, self.stopAll)
-        self.config = configs.Init()
 
     def main(self):
         self.handler.listen()

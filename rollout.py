@@ -3,7 +3,6 @@ import torch
 
 from data import Db, Step
 from util import timeit, UniImageViewer
-from configs import Init
 
 
 # @timeit
