@@ -44,6 +44,7 @@ class RolloutThread(threading.Thread):
         self.env_config = config
         self._stop_event = threading.Event()
         self.redis = redis
+        logging.debug(f'connecting to redis on host: {config.redis_host} port: {config.redis_port} pass: {config.redis_password}')
         self.db = Db(host=config.redis_host, port=config.redis_port, password=config.redis_password)
         self.server_uuid = server_uuid
         self.policy = policy.to('cpu').eval()

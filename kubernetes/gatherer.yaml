@@ -1,32 +1,34 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: ray-worker
+  name: gatherer
 spec:
-  replicas: 3
+  replicas: 1
   selector:
     matchLabels:
-      component: ray-worker
-      type: ray
+      component: gatherer
+      type: ppo
   template:
     metadata:
       labels:
-        component: ray-worker
-        type: ray
+        component: gatherer
+        type: ppo
     spec:
       containers:
-        - name: ray-worker
-          image: 127.0.0.1:32000/blade
-          command: ["/bin/bash", "-c", "--"]
-          args: ["ray start --node-ip-address=$MY_POD_IP --redis-address=ray-head.default:6379 --object-manager-port=12345 --node-manager-port=12346 --load-code-from-local --block"]
-          ports:
-            - containerPort: 12345
-            - containerPort: 12346
+        - name: gatherer
+          image: 127.0.0.1:32000/ppo
+          command: [ "/bin/bash", "-c", "--" ]
+          args: ["python3 /ppo/controller.py -g --redis-host=10.152.183.87 --redis-password=${REDIS_PASSWORD}"]
           env:
             - name: MY_POD_IP
               valueFrom:
                 fieldRef:
                   fieldPath: status.podIP
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: fair-squirrel-redis
+                  key: redis-password
           resources:
             limits:
               cpu: 2
