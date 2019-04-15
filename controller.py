@@ -19,9 +19,10 @@ from tensorboardX import SummaryWriter
 
 
 class Server:
-    def __init__(self, host='localhost', port=6379, db=0, password=None):
+    def __init__(self, config):
+        self.config = config
         self.id = uuid.uuid4()
-        self.r = redis.Redis(host, port, db, password=password)
+        self.r = redis.Redis(host=config.redis_host, port=config.redis_port, db=config.redis_db, password=config.redis_password)
         self.handler = MessageHandler(self.r, 'rollout')
         self.stopped = False
         self.handler.register(ResetMessage, self.reset)
@@ -41,7 +42,7 @@ class Server:
 class RolloutThread(threading.Thread):
     def __init__(self, redis, server_uuid, policy, config, num_episodes=10000):
         super().__init__()
-        self.env_config = config
+        self.config = config
         self._stop_event = threading.Event()
         self.redis = redis
         logging.debug(f'connecting to redis on host: {config.redis_host} port: {config.redis_port} pass: {config.redis_password}')
@@ -54,11 +55,11 @@ class RolloutThread(threading.Thread):
     def run(self):
 
         # todo not sure about this way of getting the rollout, might add to a stale rollout by accident
-        rollout = self.db.latest_rollout(self.env_config)
+        rollout = self.db.latest_rollout(self.config)
 
         for episode_number in range(1, self.num_episodes + 1):
-            logging.info(f'starting episode {episode_number} of {self.env_config.gym_env_string}')
-            episode = single_episode(self.env, self.env_config, self.policy, rollout)
+            logging.info(f'starting episode {episode_number} of {self.config.gym_env_string}')
+            episode = single_episode(self.env, self.config, self.policy, rollout)
             EpisodeMessage(self.server_uuid, episode_number, len(episode), episode.total_reward()).send(self.redis)
 
             if self.stopped():
@@ -73,8 +74,8 @@ class RolloutThread(threading.Thread):
 
 
 class Gatherer(Server):
-    def __init__(self, host='localhost', port=6379, db=0, password=None):
-        super().__init__(host=host, port=port, db=db, password=password)
+    def __init__(self, config):
+        super().__init__(config)
         self.handler.register(RolloutMessage, self.rollout)
         self.handler.register(StopMessage, self.stop)
         self.rollout_thread = None
@@ -82,7 +83,7 @@ class Gatherer(Server):
 
     def rollout(self, msg):
         if not self.stopped:
-            self.rollout_thread = RolloutThread(self.r, self.id, msg.policy, msg.env_config)
+            self.rollout_thread = RolloutThread(self.r, self.id, msg.policy, self.config)
             self.rollout_thread.start()
 
     def _stop(self):
@@ -125,13 +126,13 @@ class DemoThread(threading.Thread):
 
 
 class DemoListener(Server):
-    def __init__(self, host='localhost', port=6379, db=0, password=None):
-        super().__init__(host=host, port=port, db=db, password=password)
+    def __init__(self, config):
+        super().__init__(config)
         self.handler.register(RolloutMessage, self.rollout)
         self.latest_policy = None
         self.demo_thread = None
         self.env = None
-        duallog.setup('logs', f'gatherer-{self.id}-')
+        duallog.setup('logs', f'demo_listener-{self.id}-')
 
     def rollout(self, msg):
         if self.env:
@@ -145,13 +146,13 @@ class DemoListener(Server):
 
 
 class Trainer(Server):
-    def __init__(self, config, host='localhost', port=6379, db=0, password=None):
-        super().__init__(host=host, port=port, db=db, password=password)
+    def __init__(self, config):
+        super().__init__(config)
         self.handler.register(EpisodeMessage, self.episode)
         self.steps = 0
         self.config = config
         duallog.setup('logs', 'trainer')
-        self.db = Db(host=host, port=port, db=db, password=config.redis_password)
+        self.db = Db(host=config.redis_host, port=config.redis_port, db=config.redis_db, password=config.redis_password)
         self.policy = PPOWrap(config.features, config.action_map, config.hidden)
         self.rollout = self.db.create_rollout(config)
 
@@ -186,8 +187,8 @@ class Trainer(Server):
 
 
 class TensorBoardListener(Server):
-    def __init__(self, host='localhost', port=6379, db=0, password=None):
-        super().__init__(host=host, port=port, db=db, password=password)
+    def __init__(self, config):
+        super().__init__(config)
         self.env_config = configs.LunarLander()
         self.handler.register(EpisodeMessage, self.episode)
         self.handler.register(StopAllMessage, self.stopAll)
@@ -202,18 +203,6 @@ class TensorBoardListener(Server):
     def stopAll(self, msg):
         self.tb_step = 0
         self.tb = self.config.getSummaryWriter(config.gym_env_string)
-
-
-class GatherThread(threading.Thread):
-    def run(self):
-        s = Gatherer()
-        s.main()
-
-
-class TrainerThread(threading.Thread):
-    def run(self):
-        s = Trainer()
-        s.main()
 
 
 if __name__ == '__main__':
@@ -251,17 +240,17 @@ if __name__ == '__main__':
     r = redis.Redis(host=config.redis_host, port=config.redis_port, password=config.redis_password)
 
     if args.trainer:
-        trainer = Trainer(config, host=config.redis_host, port=config.redis_port, password=config.redis_password)
+        trainer = Trainer(config)
         trainer.main()
     elif args.gatherer:
-        gatherer = Gatherer(host=config.redis_host, port=config.redis_port, password=config.redis_password)
+        gatherer = Gatherer(config)
         gatherer.main()
     elif args.monitor:
-        tb = TensorBoardListener(host=config.redis_host, port=config.redis_port, password=config.redis_password)
+        tb = TensorBoardListener(config)
         tb.main()
 
     elif args.demo:
-        demo = DemoListener(host=config.redis_host, port=config.redis_port)
+        demo = DemoListener(config)
         demo.main()
 
     elif args.start:
