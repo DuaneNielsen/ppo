@@ -19,9 +19,9 @@ from tensorboardX import SummaryWriter
 
 
 class Server:
-    def __init__(self, host='localhost', port=6379, db=0):
+    def __init__(self, host='localhost', port=6379, db=0, password=None):
         self.id = uuid.uuid4()
-        self.r = redis.Redis(host, port, db)
+        self.r = redis.Redis(host, port, db, password=password)
         self.handler = MessageHandler(self.r, 'rollout')
         self.stopped = False
         self.handler.register(ResetMessage, self.reset)
@@ -39,15 +39,15 @@ class Server:
 
 
 class RolloutThread(threading.Thread):
-    def __init__(self, redis, server_uuid, policy, env_config, num_episodes=10000):
+    def __init__(self, redis, server_uuid, policy, config, num_episodes=10000):
         super().__init__()
-        self.env_config = env_config
+        self.env_config = config
         self._stop_event = threading.Event()
         self.redis = redis
-        self.db = Db()
+        self.db = Db(host=config.redis_host, port=config.redis_port, password=config.redis_password)
         self.server_uuid = server_uuid
         self.policy = policy.to('cpu').eval()
-        self.env = gym.make(env_config.gym_env_string)
+        self.env = gym.make(config.gym_env_string)
         self.num_episodes = num_episodes
 
     def run(self):
@@ -55,7 +55,7 @@ class RolloutThread(threading.Thread):
         # todo not sure about this way of getting the rollout, might add to a stale rollout by accident
         rollout = self.db.latest_rollout(self.env_config)
 
-        for episode_number in range(1, self.num_episodes+1):
+        for episode_number in range(1, self.num_episodes + 1):
             logging.info(f'starting episode {episode_number} of {self.env_config.gym_env_string}')
             episode = single_episode(self.env, self.env_config, self.policy, rollout)
             EpisodeMessage(self.server_uuid, episode_number, len(episode), episode.total_reward()).send(self.redis)
@@ -72,8 +72,8 @@ class RolloutThread(threading.Thread):
 
 
 class Gatherer(Server):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, host='localhost', port=6379, db=0, password=None):
+        super().__init__(host=host, port=port, db=db, password=password)
         self.handler.register(RolloutMessage, self.rollout)
         self.handler.register(StopMessage, self.stop)
         self.rollout_thread = None
@@ -124,8 +124,8 @@ class DemoThread(threading.Thread):
 
 
 class DemoListener(Server):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, host='localhost', port=6379, db=0, password=None):
+        super().__init__(host=host, port=port, db=db, password=password)
         self.handler.register(RolloutMessage, self.rollout)
         self.latest_policy = None
         self.demo_thread = None
@@ -136,7 +136,7 @@ class DemoListener(Server):
         if self.env:
             self.env.reset()
         else:
-            self.env = gym.make(env_config.gym_env_string)
+            self.env = gym.make(config.gym_env_string)
         self.latest_policy = msg.policy
         if self.demo_thread is None or not self.demo_thread.isAlive():
             self.demo_thread = DemoThread(msg.policy, msg.env_config, self.env)
@@ -144,16 +144,15 @@ class DemoListener(Server):
 
 
 class Trainer(Server):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, config, host='localhost', port=6379, db=0, password=None):
+        super().__init__(host=host, port=port, db=db, password=password)
         self.handler.register(EpisodeMessage, self.episode)
         self.steps = 0
-        self.env_config = configs.LunarLander()
-        self.config = configs.Init()
+        self.config = config
         duallog.setup('logs', 'trainer')
-        self.db = Db()
-        self.policy = PPOWrap(env_config.features, env_config.action_map, env_config.hidden)
-        self.rollout = self.db.create_rollout(env_config)
+        self.db = Db(host=host, port=port, db=db, password=config.redis_password)
+        self.policy = PPOWrap(config.features, config.action_map, config.hidden)
+        self.rollout = self.db.create_rollout(config)
 
     def episode(self, msg):
         if not self.stopped:
@@ -162,7 +161,7 @@ class Trainer(Server):
             logging.info(f'got {self.steps} steps')
             if self.steps > 10000:
                 self.rollout.end()
-                dataset = RolloutDatasetBase(env_config, self.rollout)
+                dataset = RolloutDatasetBase(config, self.rollout)
 
                 logging.info('got data... sending stop')
                 StopMessage(self.id).send(self.r)
@@ -174,11 +173,11 @@ class Trainer(Server):
                 logging.info('deleting rollout')
                 self.db.delete_rollout(self.rollout)
                 self.steps = 0
-                self.rollout = self.db.create_rollout(env_config)
+                self.rollout = self.db.create_rollout(config)
                 logging.info('deleted rollout')
 
                 logging.info('starting next rollout')
-                RolloutMessage(self.id, self.rollout.id, self.policy, self.env_config).send(self.r)
+                RolloutMessage(self.id, self.rollout.id, self.policy, self.config).send(self.r)
 
     def stopAll(self, msg):
         super().stopAll(msg)
@@ -186,13 +185,13 @@ class Trainer(Server):
 
 
 class TensorBoardListener(Server):
-    def __init__(self):
-        super().__init__()
+    def __init__(self, host='localhost', port=6379, db=0, password=None):
+        super().__init__(host=host, port=port, db=db, password=password)
         self.env_config = configs.LunarLander()
         self.handler.register(EpisodeMessage, self.episode)
         self.handler.register(StopAllMessage, self.stopAll)
         self.tb_step = 0
-        self.tb = self.config.getSummaryWriter(env_config.gym_env_string)
+        self.tb = self.config.getSummaryWriter(config.gym_env_string)
 
     def episode(self, msg):
         self.tb.add_scalar('reward', msg.total_reward, self.tb_step)
@@ -201,9 +200,7 @@ class TensorBoardListener(Server):
 
     def stopAll(self, msg):
         self.tb_step = 0
-        self.tb = self.config.getSummaryWriter(env_config.gym_env_string)
-
-
+        self.tb = self.config.getSummaryWriter(config.gym_env_string)
 
 
 class GatherThread(threading.Thread):
@@ -235,29 +232,37 @@ if __name__ == '__main__':
                        action="store_true")
     group.add_argument("--stopall", help="stop training",
                        action="store_true")
+    parser.add_argument("-rh", "--redis-host", help='hostname of redis server', dest='redis_host')
+    parser.add_argument("-rp", "--redis-port", help='hostname of redis server', dest='redis_port')
+    parser.add_argument("-ra", "--redis-password", help='hostname of redis server', dest='redis_password')
     args = parser.parse_args()
 
-    env_config = configs.LunarLander()
-    policy_net = PPOWrap(env_config.features, env_config.action_map, env_config.hidden)
+    config = configs.LunarLander()
 
-    r = redis.Redis()
+    config.redis_host = args.redis_host if args.redis_host is not None else config.redis_host
+    config.redis_port = args.redis_port if args.redis_port is not None else config.redis_port
+    config.redis_password = args.redis_password if args.redis_password is not None else config.redis_password
+
+    policy_net = PPOWrap(config.features, config.action_map, config.hidden)
+
+    r = redis.Redis(host=config.redis_host, port=config.redis_port, password=config.redis_password)
 
     if args.trainer:
-        trainer = Trainer()
+        trainer = Trainer(config, host=config.redis_host, port=config.redis_port, password=config.redis_password)
         trainer.main()
     elif args.gatherer:
-        gatherer = Gatherer()
+        gatherer = Gatherer(host=config.redis_host, port=config.redis_port, password=config.redis_password)
         gatherer.main()
     elif args.monitor:
-        tb = TensorBoardListener()
+        tb = TensorBoardListener(host=config.redis_host, port=config.redis_port, password=config.redis_password)
         tb.main()
 
     elif args.demo:
-        demo = DemoListener()
+        demo = DemoListener(host=config.redis_host, port=config.redis_port)
         demo.main()
 
     elif args.start:
         ResetMessage(uuid.uuid4()).send(r)
-        RolloutMessage(0, policy_net, env_config).send(r)
+        RolloutMessage(uuid.uuid4(), 0, policy_net, config).send(r)
     elif args.stopall:
         StopAllMessage(uuid.uuid4()).send(r)

@@ -159,8 +159,8 @@ class SingleProcessDataSet(SingleProcessDataSetAbstract):
 
 
 class Db:
-    def __init__(self, host='localhost', port=6379, db=0):
-        self.redis = redis.Redis(host=host, port=port, db=db)
+    def __init__(self, host='localhost', port=6379, password=None, db=0):
+        self.redis = redis.Redis(host=host, port=port, db=db, password=password)
         self.rollout_seq = RedisSequence(self.redis, 'rollout')
 
     def drop(self):

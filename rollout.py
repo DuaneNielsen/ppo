@@ -72,18 +72,18 @@ from util import timeit, UniImageViewer
 
 
 @timeit
-def rollout_policy(num_episodes, policy, env_config, config):
+def rollout_policy(num_episodes, policy, config):
 
     policy = policy.eval()
     policy = policy.to('cpu')
-    db = Db()
-    rollout = db.create_rollout(env_config)
-    v = UniImageViewer(env_config.gym_env_string, (200, 160))
-    env = gym.make(env_config.gym_env_string)
+    db = Db(host=config.redis_host, port=config.redis_port)
+    rollout = db.create_rollout(config)
+    v = UniImageViewer(config.gym_env_string, (200, 160))
+    env = gym.make(config.gym_env_string)
 
     for i in range(num_episodes):
 
-        episode = single_episode(env, env_config, policy, rollout)
+        episode = single_episode(env, config, policy, rollout)
 
         # more monitoring
         config.tb.add_scalar('reward', episode.total_reward(), config.tb_step)
@@ -96,13 +96,13 @@ def rollout_policy(num_episodes, policy, env_config, config):
     return rollout
 
 
-def single_episode(env, env_config, policy, rollout=None, v=None, render=False, display_observation=False):
+def single_episode(env, config, policy, rollout=None, v=None, render=False, display_observation=False):
 
     """
 
     :param config: The General configuration
     :param env: The simulator, reset will be called at the start of each episode
-    :param env_config: the simulator configuration
+    :param config: the simulator configuration
     :param policy: the policy to run
     :param rollout: the rollout data structure to capture experience into
     :param v: an object with a render method for displaying images
@@ -116,27 +116,27 @@ def single_episode(env, env_config, policy, rollout=None, v=None, render=False, 
         episode = rollout.create_episode()
     episode_length = 0
     observation_t0 = env.reset()
-    action = env_config.default_action
+    action = config.default_action
     observation_t1, reward, done, info = env.step(action)
-    observation = env_config.prepro(observation_t1, observation_t0)
+    observation = config.prepro(observation_t1, observation_t0)
     observation_t0 = observation_t1
 
     done = False
     while not done:
         # take an action on current observation and record result
-        observation_tensor = env_config.transform(observation, insert_batch=True)
+        observation_tensor = config.transform(observation, insert_batch=True)
         action_prob = policy(observation_tensor)
         index, action = policy.sample(action_prob)
 
         observation_t1, reward, done, info = env.step(action.squeeze().item())
 
-        done = done or episode_length > env_config.max_rollout_len
+        done = done or episode_length > config.max_rollout_len
 
         if episode is not None:
-            episode.append(Step(observation, index, reward, done), env_config.episode_batch_size)
+            episode.append(Step(observation, index, reward, done), config.episode_batch_size)
 
         # compute the observation that resulted from our action
-        observation = env_config.prepro(observation_t1, observation_t0)
+        observation = config.prepro(observation_t1, observation_t0)
         observation_t0 = observation_t1
 
         if render:

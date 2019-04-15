@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: trainer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      component: trainer
+      type: ppo
+  template:
+    metadata:
+      labels:
+        component: trainer
+        type: ppo
+    spec:
+      containers:
+        - name: trainer
+          image: 127.0.0.1:32000/ppo
+          command: [ "/bin/bash", "-c", "--" ]
+          args: ["python3 /ppo/controller.py -t "]
+          env:
+            - name: MY_POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+          resources:
+            limits:
+              cpu: 2
