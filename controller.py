@@ -237,6 +237,8 @@ if __name__ == '__main__':
     parser.add_argument("-ra", "--redis-password", help='hostname of redis server', dest='redis_password')
     args = parser.parse_args()
 
+    print(args)
+
     config = configs.LunarLander()
 
     config.redis_host = args.redis_host if args.redis_host is not None else config.redis_host
