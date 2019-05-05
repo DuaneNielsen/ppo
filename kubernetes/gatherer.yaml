@@ -3,7 +3,7 @@ kind: Deployment
 metadata:
   name: gatherer
 spec:
-  replicas: 1
+  replicas: 4
   selector:
     matchLabels:
       component: gatherer
@@ -16,19 +16,18 @@ spec:
     spec:
       containers:
         - name: gatherer
-          image: 127.0.0.1:32000/ppo
+          image: localhost:5000/ppo
           command: [ "/bin/bash", "-c", "--" ]
-          args: ["python3 /ppo/controller.py -g --redis-host=fair-squirrel-redis-master.default.svc.cluster.local --redis-password=${REDIS_PASSWORD}"]
+          args: ["python3 /ppo/controller.py -g --redis-host=ppo-redis-master.default.svc.cluster.local"]
           env:
             - name: MY_POD_IP
               valueFrom:
                 fieldRef:
                   fieldPath: status.podIP
-            - name: REDIS_PASSWORD
-              valueFrom:
-                secretKeyRef:
-                  name: fair-squirrel-redis
-                  key: redis-password
           resources:
+            requests:
+              cpu: 2
+              memory: 4Gi
             limits:
               cpu: 2
+              memory: 4Gi

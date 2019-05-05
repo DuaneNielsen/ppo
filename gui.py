@@ -1,10 +1,11 @@
 import PySimpleGUI as sg
 from messages import StopAllMessage, ResetMessage, EpisodeMessage, RolloutMessage, MessageHandler, \
-    TrainingProgress
+    TrainingProgress, StopMessage
 from redis import Redis
 import configs
 from models import PPOWrap
 import uuid
+from datetime import datetime
 
 # This design pattern simulates button callbacks
 # Note that callbacks are NOT a part of the package's interface to the
@@ -16,28 +17,49 @@ import duallog
 
 duallog.setup('logs', 'gui')
 
+rollout_time = None
+
 def episode(msg):
     global next_free_slot
 
+    # add a new slot if needed
     if msg.server_uuid not in gatherers:
-        gatherers[msg.server_uuid] = 'gatherer' + str(next_free_slot)
+        gatherers[msg.server_uuid] = str(next_free_slot)
         gatherers_progress[msg.server_uuid] = 0
         next_free_slot += 1
 
     if int(msg.id) == 1:
         gatherers_progress[msg.server_uuid] = 0
+        gatherers_progress_epi[msg.server_uuid] = 0
     else:
         gatherers_progress[msg.server_uuid] += int(msg.steps)
-    window.FindElement(gatherers[msg.server_uuid]).UpdateBar(gatherers_progress[msg.server_uuid])
+        gatherers_progress_epi[msg.server_uuid] += 1
+
+    window.FindElement('gatherer' + gatherers[msg.server_uuid]).UpdateBar(gatherers_progress[msg.server_uuid])
+    window.FindElement('gatherer_epi' + gatherers[msg.server_uuid]).Update(gatherers_progress_epi[msg.server_uuid])
 
 
+
+def rec_rollout(msg):
+    global rollout_time
+    rollout_time = datetime.now()
+
+
+def rec_stop(msg):
+    global rollout_time
+    if rollout_time != None:
+        walltime = datetime.now() - rollout_time
+        window.FindElement('wallclock').Update(str(walltime))
 
 
 def gatherer_progressbars(number, max_episodes):
     pbars = []
+    epi_counters = []
     for i in range(number):
         pbars.append(sg.ProgressBar(max_episodes, orientation='v', size=(20, 20), key='gatherer' + str(i)))
-    return pbars
+        epi_counters.append(sg.Text('0', size=(3, 2), key='gatherer_epi' + str(i)))
+
+    return pbars, epi_counters
 
 
 def training_progress(msg):
@@ -60,7 +82,7 @@ if __name__ == '__main__':
 
     from argparse import ArgumentParser
 
-    parser = ArgumentParser(description='Start server.')
+    parser = ArgumentParser(description='Start GUI')
 
     parser.add_argument("-rh", "--redis-host", help='hostname of redis server', dest='redis_host')
     parser.add_argument("-rp", "--redis-port", help='hostname of redis server', dest='redis_port')
@@ -79,24 +101,30 @@ if __name__ == '__main__':
 
     gatherers = {}
     gatherers_progress = {}
+    gatherers_progress_epi = {}
     next_free_slot = 0
 
     handler = MessageHandler(r, 'rollout')
     handler.register(EpisodeMessage, episode)
     handler.register(TrainingProgress, training_progress)
+    handler.register(StopMessage, rec_stop)
+    handler.register(RolloutMessage, rec_rollout)
+
+    pbars, epi_count = gatherer_progressbars(5, 10000)
 
     # Layout the design of the GUI
     layout = [
         [sg.Text('Please click a button', auto_size_text=True)],
-        [sg.ProgressBar(10000, orientation='h', size=(20, 20), key='trainer')],
-        gatherer_progressbars(5, 10000),
+        [sg.ProgressBar(10000, orientation='h', size=(20, 20), key='trainer'), sg.Text('000000', key='wallclock')],
+        pbars,
+        epi_count,
         [sg.Button('Start'),
          sg.Button('Stop'),
          sg.Quit()]
     ]
 
     # Show the Window to the user
-    window = sg.Window('Button callback example').Layout(layout)
+    window = sg.Window('Control Panel').Layout(layout)
 
     # Event loop. Read buttons, make callbacks
     while True:

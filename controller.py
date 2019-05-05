@@ -237,7 +237,13 @@ if __name__ == '__main__':
 
     policy_net = PPOWrap(config.features, config.action_map, config.hidden)
 
-    r = redis.Redis(host=config.redis_host, port=config.redis_port, password=config.redis_password)
+    while True:
+        try:
+            r = redis.Redis(host=config.redis_host, port=config.redis_port, password=config.redis_password)
+            break
+        except:
+            logging.ERROR(f'connecting to redis on {config.redis_host}:{config.redis_port} waiting 10 secs and retrying')
+            time.sleep(10.0)
 
     if args.trainer:
         trainer = Trainer(config)

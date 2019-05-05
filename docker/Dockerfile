@@ -1,6 +1,5 @@
 FROM ubuntu:18.04
-RUN apt-get update
-RUN apt-get install -y keyboard-configuration
+RUN apt-get update && apt-get install -y keyboard-configuration
 
 # python 3
 RUN apt-get install -y python-setuptools
