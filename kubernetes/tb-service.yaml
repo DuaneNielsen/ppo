@@ -1,0 +1,11 @@
+kind: Service
+apiVersion: v1
+metadata:
+  name: tb-service
+spec:
+  selector:
+    component: tb-monitor
+  ports:
+  - protocol: TCP
+    port: 6006
+    targetPort: 6006

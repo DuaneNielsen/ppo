@@ -1,0 +1,71 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: tb-monitor
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      component: tb-monitor
+      type: ppo
+  template:
+    metadata:
+      labels:
+        component: tb-monitor
+        type: ppo
+    spec:
+      containers:
+        - name: tb-monitor
+          image: localhost:5000/ppo
+          volumeMounts:
+            - mountPath: "/runs"
+              name: run-dir
+          command: [ "/bin/bash", "-c", "--" ]
+          args: ["python3 /ppo/controller.py --monitor --redis-host=ppo-redis-master.default.svc.cluster.local"]
+          env:
+            - name: MY_POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ppo-postgres-postgresql
+                  key: postgresql-password
+          resources:
+            requests:
+              cpu: 2
+              memory: 256M
+            limits:
+              cpu: 2
+              memory: 256M
+        - name: tb-server
+          image: localhost:5000/ppo
+          volumeMounts:
+            - mountPath: "/runs"
+              name: run-dir
+          ports:
+            - containerPort: 6006
+          command: [ "/bin/bash", "-c", "--" ]
+          args: ["tensorboard --logdir /runs"]
+          env:
+            - name: MY_POD_IP
+              valueFrom:
+                fieldRef:
+                  fieldPath: status.podIP
+            - name: POSTGRES_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: ppo-postgres-postgresql
+                  key: postgresql-password
+          resources:
+            requests:
+              cpu: 2
+              memory: 1Gi
+            limits:
+              cpu: 2
+              memory: 1Gi
+      volumes:
+        - name: run-dir
+          persistentVolumeClaim:
+            claimName: pv-volume-claim-tb

@@ -26,12 +26,14 @@ def episode(msg):
     if msg.server_uuid not in gatherers:
         gatherers[msg.server_uuid] = str(next_free_slot)
         gatherers_progress[msg.server_uuid] = 0
+        gatherers_progress_epi[msg.server_uuid] = 0
         next_free_slot += 1
 
     if int(msg.id) == 1:
-        gatherers_progress[msg.server_uuid] = 0
-        gatherers_progress_epi[msg.server_uuid] = 0
-    else:
+         gatherers_progress[msg.server_uuid] = 0
+         gatherers_progress_epi[msg.server_uuid] = 0
+
+    if msg.server_uuid in gatherers:
         gatherers_progress[msg.server_uuid] += int(msg.steps)
         gatherers_progress_epi[msg.server_uuid] += 1
 

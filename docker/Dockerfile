@@ -35,6 +35,9 @@ RUN pip3 install gym[atari]
 RUN pip3 install https://download.pytorch.org/whl/cu100/torch-1.0.1.post2-cp36-cp36m-linux_x86_64.whl
 RUN pip3 install torchvision
 
+# tensorflow
+RUN pip3 install tensorflow
+
 # the project
 ADD https://api.github.com/repos/DuaneNielsen/ppo/git/refs/heads/master version.json
 RUN git clone https://github.com/DuaneNielsen/ppo.git

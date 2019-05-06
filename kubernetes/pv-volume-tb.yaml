@@ -1,0 +1,15 @@
+kind: PersistentVolume
+apiVersion: v1
+metadata:
+  name:  pv-volume-tb
+  labels:
+    type: local
+    data: "rundir"
+spec:
+  storageClassName:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  hostPath:
+    path: "/mnt/runs"
