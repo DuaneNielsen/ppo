@@ -65,10 +65,6 @@ class BaseConfig:
         self.max_minibatch_size = 400000
         self.resume = False
         self.debug = False
-        self.redis_host = 'localhost'
-        self.redis_port = 6379
-        self.redis_db = 0
-        self.redis_password = None
 
     def rundir(self, name='default'):
         return f'runs/{name}_{random.randint(0,1000)}'

@@ -14,15 +14,20 @@ from ppo_clip_discrete import train_policy
 from data import RolloutDatasetBase, Db
 from rollout import single_episode
 import gym
+from playhouse.postgres_ext import PostgresqlExtDatabase
+from peewee import PostgresqlDatabase, Model, CharField, TimestampField, BlobField, FloatField, IntegerField, Proxy
+from playhouse.postgres_ext import *
 import gym_duane
 from tensorboardX import SummaryWriter
+from datetime import datetime
+from statistics import mean
+import pickle
 
 
 class Server:
-    def __init__(self, config):
-        self.config = config
+    def __init__(self, redis_host, redis_port, redis_db, redis_password):
         self.id = uuid.uuid4()
-        self.r = redis.Redis(host=config.redis_host, port=config.redis_port, db=config.redis_db, password=config.redis_password)
+        self.r = redis.Redis(host=redis_host, port=redis_port, db=redis_db, password=redis_password)
         self.handler = MessageHandler(self.r, 'rollout')
         self.stopped = False
         self.handler.register(ResetMessage, self.reset)
@@ -74,8 +79,8 @@ class RolloutThread(threading.Thread):
 
 
 class Gatherer(Server):
-    def __init__(self, config):
-        super().__init__(config)
+    def __init__(self, redis_host='localhost', redis_port=6379, redis_db=0, redis_password=None):
+        super().__init__(redis_host, redis_port, redis_db, redis_password)
         self.handler.register(RolloutMessage, self.rollout)
         self.handler.register(StopMessage, self.stop)
         self.rollout_thread = None
@@ -83,7 +88,7 @@ class Gatherer(Server):
 
     def rollout(self, msg):
         if not self.stopped:
-            self.rollout_thread = RolloutThread(self.r, self.id, msg.policy, self.config)
+            self.rollout_thread = RolloutThread(self.r, self.id, msg.policy, msg.config)
             self.rollout_thread.start()
 
     def _stop(self):
@@ -126,8 +131,8 @@ class DemoThread(threading.Thread):
 
 
 class DemoListener(Server):
-    def __init__(self, config):
-        super().__init__(config)
+    def __init__(self, redis_host='localhost', redis_port=6379, redis_db=0, redis_password=None):
+        super().__init__(redis_host, redis_port, redis_db, redis_password)
         self.handler.register(RolloutMessage, self.rollout)
         self.latest_policy = None
         self.demo_thread = None
@@ -146,13 +151,13 @@ class DemoListener(Server):
 
 
 class Trainer(Server):
-    def __init__(self, config):
-        super().__init__(config)
+    def __init__(self, redis_host='localhost', redis_port=6379, redis_db=0, redis_password=None):
+        super().__init__(redis_host, redis_port, redis_db, redis_password)
         self.handler.register(EpisodeMessage, self.episode)
         self.steps = 0
         self.config = config
         duallog.setup('logs', 'trainer')
-        self.db = Db(host=config.redis_host, port=config.redis_port, db=config.redis_db, password=config.redis_password)
+        self.db = Db(host=redis_host, port=redis_port, db=redis_db, password=redis_password)
         self.policy = PPOWrap(config.features, config.action_map, config.hidden)
         self.rollout = self.db.create_rollout(config)
 
@@ -186,13 +191,53 @@ class Trainer(Server):
         self.steps = 0
 
 
+
+database_proxy = Proxy()
+
+
+class BaseModel(Model):
+    """A base model that will use our Postgresql database"""
+    class Meta:
+        database = database_proxy
+
+
+class PolicyStore(BaseModel):
+    run = CharField()
+    timestamp = TimestampField()
+    stats = JSONField()
+    policy = BlobField()
+
+
+
+class Coordinator(Server):
+    def __init__(self, redis_host='localhost', redis_port=6379, redis_db=0, redis_password=None,
+                 db_host='localhost', db_port=5432, db_name='policy_db', db_user='policy_user', db_password=None):
+        super().__init__(redis_host, redis_port, redis_db, redis_password)
+        db = PostgresqlDatabase(db_name, user=db_user, password=db_password,
+                                host=db_host, port=db_port)
+        database_proxy.initialize(db)
+        db.create_tables([PolicyStore])
+
+    def write_policy_to_postgres(self, policy, config, run):
+        row = PolicyStore()
+        row.run = "run_id"
+        row.stats = "{\"say\":\"hello\"}"
+        row.timestamp = datetime.now()
+        policy_weights = policy.state_dict()
+        row.policy = pickle.dumps(policy_weights, 0)
+        row.save()
+
+
+
 class TensorBoardListener(Server):
-    def __init__(self, config):
-        super().__init__(config)
+    def __init__(self, redis_host, redis_port, redis_db, redis_password):
+        super().__init__(redis_host, redis_port, redis_db, redis_password)
+        #todo fix the hardcoded config
         self.env_config = configs.LunarLander()
         self.handler.register(EpisodeMessage, self.episode)
         self.handler.register(StopAllMessage, self.stopAll)
         self.tb_step = 0
+        #todo probably needs to be moved again!
         self.tb = self.config.getSummaryWriter(config.gym_env_string)
 
     def episode(self, msg):
@@ -202,6 +247,7 @@ class TensorBoardListener(Server):
 
     def stopAll(self, msg):
         self.tb_step = 0
+        #todo need to rethink how I'm doing this
         self.tb = self.config.getSummaryWriter(config.gym_env_string)
 
 
@@ -211,6 +257,8 @@ if __name__ == '__main__':
     parser = ArgumentParser(description='Start server.')
     group = parser.add_mutually_exclusive_group()
     group.add_argument("-t", "--trainer", help="start a training instance",
+                       action="store_true")
+    group.add_argument("-c", "--coordinator", help="start a coordinator instance",
                        action="store_true")
     group.add_argument("-g", "--gatherer", help="start a gathering instance",
                        action="store_true")
@@ -222,41 +270,53 @@ if __name__ == '__main__':
                        action="store_true")
     group.add_argument("--stopall", help="stop training",
                        action="store_true")
-    parser.add_argument("-rh", "--redis-host", help='hostname of redis server', dest='redis_host')
-    parser.add_argument("-rp", "--redis-port", help='hostname of redis server', dest='redis_port')
-    parser.add_argument("-ra", "--redis-password", help='hostname of redis server', dest='redis_password')
+    parser.add_argument("-rh", "--redis-host", help='hostname of redis server', dest='redis_host', default='localhost')
+    parser.add_argument("-rp", "--redis-port", help='port of redis server', dest='redis_port', default=6379)
+    parser.add_argument("-ra", "--redis-password", help='password of redis server', dest='redis_password', default=None)
+    parser.add_argument("-rd", "--redis-db", help='db of redis server', dest='redis_db', default=0)
+    parser.add_argument("-ph", "--postgres-host", help='hostname of postgres server', dest='postgres_host', default='localhost')
+    parser.add_argument("-pp", "--postgres-port", help='port of postgres server', dest='postgres_port', default=6379)
+    parser.add_argument("-pd", "--postgres-db", help='hostname of postgres db', dest='postgres_db',
+                        default='policy_store')
+    parser.add_argument("-pu", "--postgres-user", help='hostname of postgres user', dest='postgres_user',
+                        default='pu')
+    parser.add_argument("-pa", "--postgres-password", help='password of postgres server', dest='postgres_password', default=None)
+
     args = parser.parse_args()
 
     print(args)
 
     config = configs.LunarLander()
 
-    config.redis_host = args.redis_host if args.redis_host is not None else config.redis_host
-    config.redis_port = args.redis_port if args.redis_port is not None else config.redis_port
-    config.redis_password = args.redis_password if args.redis_password is not None else config.redis_password
-
     policy_net = PPOWrap(config.features, config.action_map, config.hidden)
 
     while True:
         try:
-            r = redis.Redis(host=config.redis_host, port=config.redis_port, password=config.redis_password)
+            r = redis.Redis(host=args.redis_host, port=args.redis_port, password=args.redis_password)
             break
         except:
-            logging.ERROR(f'connecting to redis on {config.redis_host}:{config.redis_port} waiting 10 secs and retrying')
+            logging.ERROR(f'connecting to redis on {args.redis_host}:{args.redis_port} waiting 10 secs and retrying')
             time.sleep(10.0)
 
     if args.trainer:
-        trainer = Trainer(config)
+        trainer = Trainer(args.redis_host, args.redis_port, args.redis_db, args.redis.redis_password)
         trainer.main()
+
     elif args.gatherer:
-        gatherer = Gatherer(config)
+        gatherer = Gatherer(args.redis_host, args.redis_port, args.redis_db, args.redis.redis_password)
         gatherer.main()
+
     elif args.monitor:
-        tb = TensorBoardListener(config)
+        tb = TensorBoardListener(args.redis_host, args.redis_port, args.redis_db, args.redis.redis_password)
         tb.main()
 
     elif args.demo:
-        demo = DemoListener(config)
+        demo = DemoListener(args.redis_host, args.redis_port, args.redis_db, args.redis.redis_password)
+        demo.main()
+
+    elif args.coordinator:
+        demo = Coordinator(args.redis_host, args.redis_port, args.redis_db, args.redis_password,
+                           args.postgres_host, args.postgres_port, args.postgres_db, args.postgres_user, args.postgres_password)
         demo.main()
 
     elif args.start:

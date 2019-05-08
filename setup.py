@@ -13,7 +13,8 @@ setup(name='ppo',
                         'opencv-python',
                         'torchvision',
                         'psycopg2-binary',
-                        'PySimpleGUI'],
+                        'PySimpleGUI',
+                        'peewee'],
       extras_require={
           'dev': [
               'pytest',

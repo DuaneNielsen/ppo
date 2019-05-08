@@ -1,16 +1,28 @@
 import data
 import numpy as np
-import pytest
 import configs
+import pytest
 from statistics import mean, stdev
 from data import StepCoder, NumpyCoder, RedisSequence
 import threading
 import time
 import random
 from models import PPOWrap
-from controller import GatherThread, TrainerThread
+from controller import Gatherer, Trainer, Coordinator
 from messages import RolloutMessage
 import redis
+
+
+class GatherThread(threading.Thread):
+    def run(self):
+        s = Gatherer()
+        s.main()
+
+
+class TrainerThread(threading.Thread):
+    def run(self):
+        s = Trainer()
+        s.main()
 
 
 def test_buffered():
@@ -428,4 +440,14 @@ def testGatherers():
 
     t1.join()
     g1.join()
+
+
+def testPostgresWrite():
+
+    config = configs.LunarLander()
+    policy_net = PPOWrap(config.features, config.action_map, config.hidden)
+
+    co = Coordinator(redis_host='localhost', redis_port=6379, redis_db=0, redis_password=None,
+                     db_host='localhost', db_port=5432, db_name='testpython', db_user='ppo', db_password='password')
+    co.write_policy_to_postgres(policy_net, config, 'hello_run')
 

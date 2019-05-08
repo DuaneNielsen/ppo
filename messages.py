@@ -135,14 +135,14 @@ class EpisodeMessage(Message):
 
 
 class RolloutMessage(Message):
-    def __init__(self, server_uuid, id, policy, env_config):
+    def __init__(self, server_uuid, id, policy, config):
         super().__init__(server_uuid)
         self.policy = policy
-        self.env_config = env_config
         self.id = int(id)
+        self.config = config
 
     def encode(self):
-        env_pickle = encode(self.env_config)
+        env_pickle = encode(self.config)
         policy_pickle = encode(self.policy)
         self.content = f'{{ {self._header_content}, "id":"{self.id}", "policy":"{policy_pickle}", "env_config":"{env_pickle}" }}'
 
@@ -155,8 +155,8 @@ class RolloutMessage(Message):
         server_uuid = d['server_uuid']
         id = d['id']
         policy = decode(d['policy'])
-        env_config = decode(d['env_config'])
-        return RolloutMessage(server_uuid, id, policy, env_config)
+        config = decode(d['env_config'])
+        return RolloutMessage(server_uuid, id, policy, config)
 
 
 class MessageHandler:
