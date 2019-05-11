@@ -2,26 +2,18 @@ import redis
 import configs
 import time
 import threading
-import util
 
 from messages import StopMessage, StopAllMessage, ResetMessage, StoppedMessage, \
     EpisodeMessage, RolloutMessage, MessageHandler, TrainingProgress
 from models import PPOWrap
-import uuid
 import duallog
 import logging
 from ppo_clip_discrete import train_policy
 from data import RolloutDatasetBase, Db
 from rollout import single_episode
 import gym
-from playhouse.postgres_ext import PostgresqlExtDatabase
-from peewee import PostgresqlDatabase, Model, CharField, TimestampField, BlobField, FloatField, IntegerField, Proxy
-from playhouse.postgres_ext import *
-import gym_duane
-from tensorboardX import SummaryWriter
-from datetime import datetime
-from statistics import mean
-import pickle
+import uuid
+from policy_db import PolicyDB
 
 
 class Server:
@@ -191,41 +183,13 @@ class Trainer(Server):
         self.steps = 0
 
 
-
-database_proxy = Proxy()
-
-
-class BaseModel(Model):
-    """A base model that will use our Postgresql database"""
-    class Meta:
-        database = database_proxy
-
-
-class PolicyStore(BaseModel):
-    run = CharField()
-    timestamp = TimestampField()
-    stats = JSONField()
-    policy = BlobField()
-
-
-
 class Coordinator(Server):
     def __init__(self, redis_host='localhost', redis_port=6379, redis_db=0, redis_password=None,
                  db_host='localhost', db_port=5432, db_name='policy_db', db_user='policy_user', db_password=None):
         super().__init__(redis_host, redis_port, redis_db, redis_password)
-        db = PostgresqlDatabase(db_name, user=db_user, password=db_password,
-                                host=db_host, port=db_port)
-        database_proxy.initialize(db)
-        db.create_tables([PolicyStore])
+        self.db = PolicyDB(db_host=db_host, db_port=db_port, db_name=db_name, db_user=db_user, db_password=db_password)
 
-    def write_policy_to_postgres(self, policy, config, run):
-        row = PolicyStore()
-        row.run = "run_id"
-        row.stats = "{\"say\":\"hello\"}"
-        row.timestamp = datetime.now()
-        policy_weights = policy.state_dict()
-        row.policy = pickle.dumps(policy_weights, 0)
-        row.save()
+
 
 
 

@@ -11,6 +11,7 @@ from models import PPOWrap
 from controller import Gatherer, Trainer, Coordinator
 from messages import RolloutMessage
 import redis
+import policy_db
 
 
 class GatherThread(threading.Thread):
@@ -447,7 +448,13 @@ def testPostgresWrite():
     config = configs.LunarLander()
     policy_net = PPOWrap(config.features, config.action_map, config.hidden)
 
-    co = Coordinator(redis_host='localhost', redis_port=6379, redis_db=0, redis_password=None,
-                     db_host='localhost', db_port=5432, db_name='testpython', db_user='ppo', db_password='password')
-    co.write_policy_to_postgres(policy_net, config, 'hello_run')
+    # co = Coordinator(redis_host='localhost', redis_port=6379, redis_db=0, redis_password=None,
+    #                  db_host='localhost', db_port=5432, db_name='testpython', db_user='ppo', db_password='password')
+    db = policy_db.PolicyDB()
+    run = "run_id"
+    stats = "{\"say\":\"hello\"}"
+    db.write_policy(policy_net, config, run, stats)
+    record = db.get_latest(run)
+
+
 
