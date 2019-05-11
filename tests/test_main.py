@@ -12,6 +12,8 @@ from controller import Gatherer, Trainer, Coordinator
 from messages import RolloutMessage
 import redis
 import policy_db
+import torch
+import uuid
 
 
 class GatherThread(threading.Thread):
@@ -446,15 +448,29 @@ def testGatherers():
 def testPostgresWrite():
 
     config = configs.LunarLander()
+    s0 = torch.randn(config.features)
+    s1 = torch.randn(config.features)
+    s = config.prepro(s0, s1).unsqueeze(0)
+
+
     policy_net = PPOWrap(config.features, config.action_map, config.hidden)
+
+    a0 = policy_net(s)
+
+    policy_state_dict = policy_net.state_dict()
+    policy_net.load_state_dict(policy_state_dict)
 
     # co = Coordinator(redis_host='localhost', redis_port=6379, redis_db=0, redis_password=None,
     #                  db_host='localhost', db_port=5432, db_name='testpython', db_user='ppo', db_password='password')
     db = policy_db.PolicyDB()
     run = "run_id"
     stats = "{\"say\":\"hello\"}"
-    db.write_policy(policy_net, config, run, stats)
-    record = db.get_latest(run)
+    db.write_policy(policy_state_dict, config, run, stats)
+    state_dict, config, run_r, stats_r, ts = db.get_latest(run)
+    policy_net.load_state_dict(state_dict)
 
+    a1 = policy_net(s)
 
-
+    assert run_r == run
+    assert stats == stats_r
+    assert torch.equal(a0, a1)
