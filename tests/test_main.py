@@ -463,7 +463,7 @@ def testPostgresWrite():
     db = policy_db.PolicyDB()
     run = "run_id"
     run_state = 'RUNNING'
-    stats = {'say': 'hello', 'ave_reward_episode': 15.3 + random.random()}
+    stats = {'header': 'unittest', 'ave_reward_episode': 15.3 + random.random()}
     db.write_policy(run, run_state, policy_state_dict, stats, config)
     record = db.get_latest(run)
     policy_net.load_state_dict(record.policy)
@@ -477,15 +477,46 @@ def testPostgresWrite():
     assert record.config_b.gym_env_string == config.gym_env_string
 
 
-def testGetBest():
+def write_policy(run, reward):
     config = configs.LunarLander()
     policy_net = PPOWrap(config.features, config.action_map, config.hidden)
     policy_state_dict = policy_net.state_dict()
     db = policy_db.PolicyDB()
-    run = "run_id"
     run_state = 'RUNNING'
-    stats = {'say': 'hello', 'ave_reward_episode': 100000.0}
+    stats = {'header': 'unittest', 'ave_reward_episode': reward}
     db.write_policy(run, run_state, policy_state_dict, stats, config)
-    record = db.get_best(config.gym_env_string)
+    return db
+
+def testDelete():
+    db = write_policy('delete_me', 200.0)
+
+    assert db.count('delete_me') > 0
+
+    db.delete('delete_me')
+
+    assert db.count('delete_me') == 0
+
+def testLatest():
+    write_policy('run1', 10.0 + random.random())
+    db = write_policy('run2', 10.0 + random.random())
+    record = db.get_latest()
+
+    assert record.run == 'run2'
+
+    record = db.get_latest('run1')
+
+    assert record.run == 'run1'
+
+def testGetBest():
+    db = write_policy('best_run', 100000.0)
+    record = db.get_best('LunarLander-v2')
 
     assert record.stats['ave_reward_episode'] == 100000.0
+
+def testCleanUp():
+    db = policy_db.PolicyDB()
+    db.delete('run_id')
+    db.delete('run1')
+    db.delete('run2')
+    db.delete('best_run')
+    db.delete('delete_me')

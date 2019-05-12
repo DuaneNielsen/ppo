@@ -2,7 +2,6 @@ from playhouse.postgres_ext import *
 from datetime import datetime
 import pickle
 import json
-import configs
 
 policy_db_proxy = Proxy()
 
@@ -47,7 +46,7 @@ class PolicyBaseModel(Model):
 class PolicyStore(PolicyBaseModel):
     run = CharField()
     run_state = CharField()
-    timestamp = TimestampField()
+    timestamp = TimestampField(resolution=10 ** 6)
     stats = JSONField()
     policy = PickleField()
     config_b = PickleField()
@@ -72,9 +71,21 @@ class PolicyDB:
         row.policy = policy_state_dict
         return row.save()
 
-    def get_latest(self, run):
-        return PolicyStore.select().where(PolicyStore.run == run).order_by(-PolicyStore.timestamp).get()
+    def get_latest(self, run=None):
+        if run is not None:
+            return PolicyStore.select().where(PolicyStore.run == run).order_by(-PolicyStore.timestamp).get()
+        return PolicyStore.select().order_by(-PolicyStore.timestamp).get()
 
     def get_best(self, env_string):
         return PolicyStore.select().where(PolicyStore.config['gym_env_string'] == env_string).\
             order_by(PolicyStore.stats['ave_reward_episode']).get()
+
+    def delete(self, run):
+        query = PolicyStore.delete().where(PolicyStore.run == run)
+        query.execute()
+
+
+    def count(self, run=None):
+        if run is not None:
+            return PolicyStore.select().where(PolicyStore.run == run).count()
+        return PolicyStore.select().count()

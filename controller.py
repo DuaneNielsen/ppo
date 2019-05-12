@@ -189,6 +189,9 @@ class Coordinator(Server):
         super().__init__(redis_host, redis_port, redis_db, redis_password)
         self.db = PolicyDB(db_host=db_host, db_port=db_port, db_name=db_name, db_user=db_user, db_password=db_password)
 
+    def start(self):
+        latest = self.db.get_latest()
+
 
 
 
