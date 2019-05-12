@@ -444,14 +444,12 @@ def testGatherers():
     t1.join()
     g1.join()
 
-
 def testPostgresWrite():
 
     config = configs.LunarLander()
     s0 = torch.randn(config.features)
     s1 = torch.randn(config.features)
     s = config.prepro(s0, s1).unsqueeze(0)
-
 
     policy_net = PPOWrap(config.features, config.action_map, config.hidden)
 
@@ -464,13 +462,30 @@ def testPostgresWrite():
     #                  db_host='localhost', db_port=5432, db_name='testpython', db_user='ppo', db_password='password')
     db = policy_db.PolicyDB()
     run = "run_id"
-    stats = "{\"say\":\"hello\"}"
-    db.write_policy(policy_state_dict, config, run, stats)
-    state_dict, config, run_r, stats_r, ts = db.get_latest(run)
-    policy_net.load_state_dict(state_dict)
+    run_state = 'RUNNING'
+    stats = {'say': 'hello', 'ave_reward_episode': 15.3 + random.random()}
+    db.write_policy(run, run_state, policy_state_dict, stats, config)
+    record = db.get_latest(run)
+    policy_net.load_state_dict(record.policy)
 
     a1 = policy_net(s)
 
-    assert run_r == run
-    assert stats == stats_r
+    assert record.run == run
+    assert record.stats == stats
     assert torch.equal(a0, a1)
+    assert record.config['gym_env_string'] == config.gym_env_string
+    assert record.config_b.gym_env_string == config.gym_env_string
+
+
+def testGetBest():
+    config = configs.LunarLander()
+    policy_net = PPOWrap(config.features, config.action_map, config.hidden)
+    policy_state_dict = policy_net.state_dict()
+    db = policy_db.PolicyDB()
+    run = "run_id"
+    run_state = 'RUNNING'
+    stats = {'say': 'hello', 'ave_reward_episode': 100000.0}
+    db.write_policy(run, run_state, policy_state_dict, stats, config)
+    record = db.get_best(config.gym_env_string)
+
+    assert record.stats['ave_reward_episode'] == 100000.0

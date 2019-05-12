@@ -39,6 +39,8 @@ class BaseConfig:
                  transform=DefaultTransform(),
                  ):
         self.gym_env_string = gym_env_string
+        self.training_algo = 'ppo'
+        self.model_string = 'MultiPolicyNet'
         self.step_coder = step_coder
         self.discount_factor = discount_factor
         self.max_rollout_len = max_rollout_len
@@ -47,7 +49,6 @@ class BaseConfig:
         self.episode_batch_size = 10
         self.experience_threads = 30
         self.print_tensor_sizes = True
-        self.last_tensor_sizes = set()
         self.gpu_profile = False
         self.gpu_profile_fn = f'{datetime.datetime.now():%d-%b-%y-%H-%M-%S}-gpu_mem_prof.txt'
         self.lineno = None
