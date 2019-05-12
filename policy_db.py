@@ -2,6 +2,7 @@ from playhouse.postgres_ext import *
 from datetime import datetime
 import pickle
 import json
+import copy
 
 policy_db_proxy = Proxy()
 
@@ -21,7 +22,7 @@ class ConfigField(JSONField):
 
     def db_value(self, value):
 
-        attribs = vars(value)
+        attribs = copy.copy(vars(value))
 
         # attributes excluded from JSON
         if 'step_coder' in attribs:
@@ -83,7 +84,6 @@ class PolicyDB:
     def delete(self, run):
         query = PolicyStore.delete().where(PolicyStore.run == run)
         query.execute()
-
 
     def count(self, run=None):
         if run is not None:
