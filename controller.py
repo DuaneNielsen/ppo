@@ -183,6 +183,10 @@ class Trainer(Server):
         self.steps = 0
 
 
+RUNNING = 'RUNNING'
+STOPPED = 'STOPPED'
+
+
 class Coordinator(Server):
     def __init__(self, redis_host='localhost', redis_port=6379, redis_db=0, redis_password=None,
                  db_host='localhost', db_port=5432, db_name='policy_db', db_user='policy_user', db_password=None):
@@ -191,6 +195,10 @@ class Coordinator(Server):
 
     def start(self):
         latest = self.db.get_latest()
+        if latest.run_state == RUNNING:
+            pass
+            #self.r.
+
 
 
 
