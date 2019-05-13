@@ -167,3 +167,6 @@ class PolicyDB:
         latest = self.get_latest(run)
         PolicyStore.delete().where((PolicyStore.best == False) & (PolicyStore.reservoir == False) & (
                 PolicyStore.id != latest.id)).execute()
+
+    def runs(self):
+        return [record.run for record in PolicyStore.select(PolicyStore.run).distinct()]

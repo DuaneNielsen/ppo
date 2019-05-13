@@ -226,3 +226,18 @@ def test_update_reservoir(db):
     db.prune('run1')
     assert db.count('run1') == 4 or db.count('run1') == 3
     assert db.reservoir('run1').count() == 3
+
+
+def test_runs(db):
+    write_policy(db, 'run1', 10.0)
+    assert len(db.runs()) == 1
+    assert db.runs()[0] == 'run1'
+    write_policy(db, 'run1', 10.0)
+    assert len(db.runs()) == 1
+    assert db.runs()[0] == 'run1'
+    write_policy(db, 'run2', 10.0)
+    assert len(db.runs()) == 2
+    runs =db.runs()
+    for run in db.runs():
+        assert (run == 'run1' or run == 'run2')
+
