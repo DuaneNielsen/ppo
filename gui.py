@@ -1,6 +1,5 @@
 import PySimpleGUI as sg
-from messages import StopAllMessage, ResetMessage, EpisodeMessage, RolloutMessage, MessageHandler, \
-    TrainingProgress, StopMessage
+from messages import *
 from redis import Redis
 import configs
 from models import PPOWrap
@@ -73,7 +72,7 @@ def training_progress(msg):
 # The callback functions
 def start():
     ResetMessage(gui_uuid).send(r)
-    RolloutMessage(gui_uuid, 0, policy_net, config).send(r)
+    StartMessage(gui_uuid, config).send(r)
 
 
 def stop():
@@ -86,17 +85,14 @@ if __name__ == '__main__':
 
     parser = ArgumentParser(description='Start GUI')
 
-    parser.add_argument("-rh", "--redis-host", help='hostname of redis server', dest='redis_host')
-    parser.add_argument("-rp", "--redis-port", help='hostname of redis server', dest='redis_port')
-    parser.add_argument("-ra", "--redis-password", help='hostname of redis server', dest='redis_password')
+    parser.add_argument("-rh", "--redis-host", help='hostname of redis server', dest='redis_host', default='localhost')
+    parser.add_argument("-rp", "--redis-port", help='port of redis server', dest='redis_port', default=6379)
+    parser.add_argument("-ra", "--redis-password", help='password of redis server', dest='redis_password', default=None)
     args = parser.parse_args()
 
     config = configs.LunarLander()
-    config.redis_host = args.redis_host if args.redis_host is not None else config.redis_host
-    config.redis_port = args.redis_port if args.redis_port is not None else config.redis_port
-    config.redis_password = args.redis_password if args.redis_password is not None else config.redis_password
 
-    r = Redis(host=config.redis_host, port=config.redis_port, password=config.redis_password)
+    r = Redis(host=args.redis_host, port=args.redis_port, password=args.redis_password)
 
     policy_net = PPOWrap(config.features, config.action_map, config.hidden)
     gui_uuid = uuid.uuid4()

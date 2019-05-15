@@ -66,6 +66,8 @@ class BaseConfig:
         self.max_minibatch_size = 400000
         self.resume = False
         self.debug = False
+        self.episodes_per_gatherer = 1
+        self.num_steps_per_rollout = 100000
 
     def rundir(self, name='default'):
         return f'runs/{name}_{random.randint(0,1000)}'

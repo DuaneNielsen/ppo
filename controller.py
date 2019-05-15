@@ -3,8 +3,7 @@ import configs
 import time
 import threading
 
-from messages import StopMessage, StopAllMessage, ResetMessage, StoppedMessage, \
-    EpisodeMessage, RolloutMessage, MessageHandler, TrainingProgress
+from messages import *
 from models import PPOWrap
 import duallog
 import logging
@@ -19,6 +18,10 @@ from policy_db import PolicyDB
 class Server:
     def __init__(self, redis_host, redis_port, redis_db, redis_password):
         self.id = uuid.uuid4()
+        self.redis_host = redis_host
+        self.redis_port = redis_port
+        self.redis_db = redis_db
+        self.redis_password = redis_password
         self.r = redis.Redis(host=redis_host, port=redis_port, db=redis_db, password=redis_password)
         self.handler = MessageHandler(self.r, 'rollout')
         self.stopped = False
@@ -37,17 +40,16 @@ class Server:
 
 
 class RolloutThread(threading.Thread):
-    def __init__(self, redis, server_uuid, policy, config, num_episodes=10000):
+    def __init__(self, redis, redis_host, redis_port, redis_password, server_uuid, policy, config, num_episodes=10000):
         super().__init__()
+        self.redis=redis
         self.config = config
         self._stop_event = threading.Event()
-        self.redis = redis
-        logging.debug(f'connecting to redis on host: {config.redis_host} port: {config.redis_port} pass: {config.redis_password}')
-        self.db = Db(host=config.redis_host, port=config.redis_port, password=config.redis_password)
+        self.db = Db(host=redis_host, port=redis_port, password=redis_password)
         self.server_uuid = server_uuid
         self.policy = policy.to('cpu').eval()
         self.env = gym.make(config.gym_env_string)
-        self.num_episodes = num_episodes
+        self.num_episodes = int(num_episodes)
 
     def run(self):
 
@@ -80,7 +82,7 @@ class Gatherer(Server):
 
     def rollout(self, msg):
         if not self.stopped:
-            self.rollout_thread = RolloutThread(self.r, self.id, msg.policy, msg.config)
+            self.rollout_thread = RolloutThread(self.r, self.redis_host, self.redis_port, self.redis_password, self.id, msg.policy, msg.config, msg.episodes)
             self.rollout_thread.start()
 
     def _stop(self):
@@ -145,38 +147,28 @@ class DemoListener(Server):
 class Trainer(Server):
     def __init__(self, redis_host='localhost', redis_port=6379, redis_db=0, redis_password=None):
         super().__init__(redis_host, redis_port, redis_db, redis_password)
-        self.handler.register(EpisodeMessage, self.episode)
-        self.steps = 0
-        self.config = config
+        self.handler.register(TrainMessage, self.handle_train)
         duallog.setup('logs', 'trainer')
         self.db = Db(host=redis_host, port=redis_port, db=redis_db, password=redis_password)
-        self.policy = PPOWrap(config.features, config.action_map, config.hidden)
         self.rollout = self.db.create_rollout(config)
 
-    def episode(self, msg):
-        if not self.stopped:
-            self.steps += msg.steps
-            TrainingProgress(self.id, self.steps).send(self.r)
-            logging.info(f'got {self.steps} steps')
-            if self.steps > 10000:
-                self.rollout.end()
-                dataset = RolloutDatasetBase(config, self.rollout)
+    def handle_train(self, msg):
+        self.rollout.end()
+        dataset = RolloutDatasetBase(config, self.rollout)
 
-                logging.info('got data... sending stop')
-                StopMessage(self.id).send(self.r)
+        policy = msg.policy
 
-                logging.info('started training')
-                train_policy(self.policy, dataset, self.config)
-                logging.info('training finished')
+        logging.info('started training')
+        train_policy(policy, dataset, msg.config)
+        logging.info('training finished')
 
-                logging.info('deleting rollout')
-                self.db.delete_rollout(self.rollout)
-                self.steps = 0
-                self.rollout = self.db.create_rollout(config)
-                logging.info('deleted rollout')
+        logging.info('deleting rollout')
+        self.db.delete_rollout(self.rollout)
+        self.rollout = self.db.create_rollout(config)
+        logging.info('deleted rollout')
 
-                logging.info('starting next rollout')
-                RolloutMessage(self.id, self.rollout.id, self.policy, self.config).send(self.r)
+        logging.info('starting next rollout')
+        TrainCompleteMessage(self.id, policy, msg.config)
 
     def stopAll(self, msg):
         super().stopAll(msg)
@@ -192,27 +184,45 @@ class Coordinator(Server):
                  db_host='localhost', db_port=5432, db_name='policy_db', db_user='policy_user', db_password=None):
         super().__init__(redis_host, redis_port, redis_db, redis_password)
         self.db = PolicyDB(db_host=db_host, db_port=db_port, db_name=db_name, db_user=db_user, db_password=db_password)
+        # self.db=PolicyDB()
+        self.exp_buffer = Db(host=redis_host, port=redis_port, db=redis_db, password=redis_password)
 
-    def start(self):
-        latest = self.db.get_latest()
-        if latest.run_state == RUNNING:
-            pass
-            #self.r.
+        self.handler.register(StartMessage, self.handle_start)
+        self.handler.register(EpisodeMessage, self.handle_episode)
+        self.handler.register(TrainCompleteMessage, self.handle_train_complete)
+        self.config = None
 
+    def handle_start(self, msg):
+        self.config = msg.config
+        policy_net = PPOWrap(self.config.features, self.config.action_map, self.config.hidden)
+        ResetMessage(self.id).send(r)
+        RolloutMessage(self.id, 0, policy_net, self.config, self.config.episodes_per_gatherer).send(r)
 
+    def handle_episode(self, msg):
+        rollout = self.exp_buffer.latest_rollout(self.config)
+        steps = len(rollout)
+        if steps > config.num_steps_per_rollout:
+            logging.info('got data... sending stop')
+            StopMessage(self.id).send(self.r)
+            TrainMessage(self.id, msg.policy, self.config)
+        else:
+            RolloutMessage(self.id, 0, policy_net, self.config, self.config.episodes_per_gatherer).send(r)
 
-
+    def handle_train_complete(self, msg):
+        if not self.stopped:
+            ResetMessage(self.id).send(r)
+            RolloutMessage(self.id, 0, msg.policy, self.config, self.config.episodes_per_gatherer).send(r)
 
 
 class TensorBoardListener(Server):
     def __init__(self, redis_host, redis_port, redis_db, redis_password):
         super().__init__(redis_host, redis_port, redis_db, redis_password)
-        #todo fix the hardcoded config
+        # todo fix the hardcoded config
         self.env_config = configs.LunarLander()
         self.handler.register(EpisodeMessage, self.episode)
         self.handler.register(StopAllMessage, self.stopAll)
         self.tb_step = 0
-        #todo probably needs to be moved again!
+        # todo probably needs to be moved again!
         self.tb = self.config.getSummaryWriter(config.gym_env_string)
 
     def episode(self, msg):
@@ -222,7 +232,7 @@ class TensorBoardListener(Server):
 
     def stopAll(self, msg):
         self.tb_step = 0
-        #todo need to rethink how I'm doing this
+        # todo need to rethink how I'm doing this
         self.tb = self.config.getSummaryWriter(config.gym_env_string)
 
 
@@ -245,17 +255,21 @@ if __name__ == '__main__':
                        action="store_true")
     group.add_argument("--stopall", help="stop training",
                        action="store_true")
+
     parser.add_argument("-rh", "--redis-host", help='hostname of redis server', dest='redis_host', default='localhost')
     parser.add_argument("-rp", "--redis-port", help='port of redis server', dest='redis_port', default=6379)
     parser.add_argument("-ra", "--redis-password", help='password of redis server', dest='redis_password', default=None)
     parser.add_argument("-rd", "--redis-db", help='db of redis server', dest='redis_db', default=0)
-    parser.add_argument("-ph", "--postgres-host", help='hostname of postgres server', dest='postgres_host', default='localhost')
-    parser.add_argument("-pp", "--postgres-port", help='port of postgres server', dest='postgres_port', default=6379)
+
+    parser.add_argument("-ph", "--postgres-host", help='hostname of postgres server', dest='postgres_host',
+                        default='localhost')
+    parser.add_argument("-pp", "--postgres-port", help='port of postgres server', dest='postgres_port', default=5432)
     parser.add_argument("-pd", "--postgres-db", help='hostname of postgres db', dest='postgres_db',
-                        default='policy_store')
+                        default='policy_db')
     parser.add_argument("-pu", "--postgres-user", help='hostname of postgres user', dest='postgres_user',
-                        default='pu')
-    parser.add_argument("-pa", "--postgres-password", help='password of postgres server', dest='postgres_password', default=None)
+                        default='policy_user')
+    parser.add_argument("-pa", "--postgres-password", help='password of postgres server', dest='postgres_password',
+                        default='password')
 
     args = parser.parse_args()
 
@@ -274,24 +288,25 @@ if __name__ == '__main__':
             time.sleep(10.0)
 
     if args.trainer:
-        trainer = Trainer(args.redis_host, args.redis_port, args.redis_db, args.redis.redis_password)
+        trainer = Trainer(args.redis_host, args.redis_port, args.redis_db, args.redis_password)
         trainer.main()
 
     elif args.gatherer:
-        gatherer = Gatherer(args.redis_host, args.redis_port, args.redis_db, args.redis.redis_password)
+        gatherer = Gatherer(args.redis_host, args.redis_port, args.redis_db, args.redis_password)
         gatherer.main()
 
     elif args.monitor:
-        tb = TensorBoardListener(args.redis_host, args.redis_port, args.redis_db, args.redis.redis_password)
+        tb = TensorBoardListener(args.redis_host, args.redis_port, args.redis_db, args.redis_password)
         tb.main()
 
     elif args.demo:
-        demo = DemoListener(args.redis_host, args.redis_port, args.redis_db, args.redis.redis_password)
+        demo = DemoListener(args.redis_host, args.redis_port, args.redis_db, args.redis_password)
         demo.main()
 
     elif args.coordinator:
         demo = Coordinator(args.redis_host, args.redis_port, args.redis_db, args.redis_password,
-                           args.postgres_host, args.postgres_port, args.postgres_db, args.postgres_user, args.postgres_password)
+                           args.postgres_host, args.postgres_port, args.postgres_db, args.postgres_user,
+                           args.postgres_password)
         demo.main()
 
     elif args.start:

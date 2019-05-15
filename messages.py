@@ -23,6 +23,9 @@ class MessageDecoder:
         self.register(StoppedMessage)
         self.register(ResetMessage)
         self.register(TrainingProgress)
+        self.register(StartMessage)
+        self.register(TrainMessage)
+        self.register(TrainCompleteMessage)
 
     def register(self, message_class):
         """ Registers a message class's decode in a lookup table"""
@@ -62,6 +65,32 @@ class Message:
         return cls(d['server_uuid'])
 
 
+class StartMessage(Message):
+    def __init__(self, server_uuid, config):
+        super().__init__(server_uuid)
+        self.config = config
+
+    def encode(self):
+        env_pickle = encode(self.config)
+        self.content = \
+            (
+                f'{{'
+                f'{self._header_content},'
+                f'"env_config": "{env_pickle}"'
+                f'}}'
+            )
+
+    @classmethod
+    def header(cls):
+        return 'START'
+
+    @classmethod
+    def decode(cls, d):
+        server_uuid = d['server_uuid']
+        config = decode(d['env_config'])
+        return StartMessage(server_uuid, config)
+
+
 class StopMessage(Message):
     def __init__(self, server_uuid):
         super().__init__(server_uuid)
@@ -96,6 +125,66 @@ class StoppedMessage(Message):
     @classmethod
     def header(cls):
         return 'STOPPED'
+
+
+class TrainMessage(Message):
+    def __init__(self, server_uuid, policy, config):
+        super().__init__(server_uuid)
+        self.policy = policy
+        self.config = config
+
+    def encode(self):
+        env_pickle = encode(self.config)
+        policy_pickle = encode(self.policy)
+        self.content = \
+            (
+                f'{{ '
+                f'{self._header_content}, '
+                f'"policy":"{policy_pickle}", '
+                f'"env_config":"{env_pickle}" '
+                f'}}'
+            )
+
+    @classmethod
+    def header(cls):
+        return 'train'
+
+    @classmethod
+    def decode(cls, d):
+        server_uuid = d['server_uuid']
+        policy = decode(d['policy'])
+        config = decode(d['env_config'])
+        return TrainMessage(server_uuid, policy, config)
+
+
+class TrainCompleteMessage(Message):
+    def __init__(self, server_uuid, policy, config):
+        super().__init__(server_uuid)
+        self.policy = policy
+        self.config = config
+
+    def encode(self):
+        env_pickle = encode(self.config)
+        policy_pickle = encode(self.policy)
+        self.content = \
+            (
+                f'{{ '
+                f'{self._header_content}, '
+                f'"policy":"{policy_pickle}", '
+                f'"env_config":"{env_pickle}" '
+                f'}}'
+            )
+
+    @classmethod
+    def header(cls):
+        return 'train_complete'
+
+    @classmethod
+    def decode(cls, d):
+        server_uuid = d['server_uuid']
+        policy = decode(d['policy'])
+        config = decode(d['env_config'])
+        return TrainMessage(server_uuid, id, policy, config)
 
 
 class TrainingProgress(Message):
@@ -135,16 +224,26 @@ class EpisodeMessage(Message):
 
 
 class RolloutMessage(Message):
-    def __init__(self, server_uuid, id, policy, config):
+    def __init__(self, server_uuid, id, policy, config, episodes):
         super().__init__(server_uuid)
         self.policy = policy
         self.id = int(id)
         self.config = config
+        self.episodes = episodes
 
     def encode(self):
         env_pickle = encode(self.config)
         policy_pickle = encode(self.policy)
-        self.content = f'{{ {self._header_content}, "id":"{self.id}", "policy":"{policy_pickle}", "env_config":"{env_pickle}" }}'
+        self.content = \
+            (
+                f'{{ '
+                f'{self._header_content}, '
+                f'"id":"{self.id}", '
+                f'"policy":"{policy_pickle}", '
+                f'"env_config":"{env_pickle}", '
+                f'"episodes":"{self.episodes}" '
+                f'}}'
+            )
 
     @classmethod
     def header(cls):
@@ -156,7 +255,8 @@ class RolloutMessage(Message):
         id = d['id']
         policy = decode(d['policy'])
         config = decode(d['env_config'])
-        return RolloutMessage(server_uuid, id, policy, config)
+        episodes = d['episodes']
+        return RolloutMessage(server_uuid, id, policy, config, episodes)
 
 
 class MessageHandler:

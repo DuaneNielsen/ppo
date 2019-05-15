@@ -185,10 +185,10 @@ class RedisRollout:
     def __init__(self, redis, env_config, id):
         self.id = id
         self.redis = redis
-        self.episodes = None
-        self.episode_len = None
-        self.episode_off = None
-        self.len = None
+        self.episodes = []
+        self.episode_len = []
+        self.episode_off = []
+        self.len = 0
         self.env_config = env_config
 
     def end(self):
