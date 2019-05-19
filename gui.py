@@ -5,6 +5,7 @@ import configs
 from models import PPOWrap
 import uuid
 from datetime import datetime
+from data import Db
 
 # This design pattern simulates button callbacks
 # Note that callbacks are NOT a part of the package's interface to the
@@ -39,6 +40,8 @@ def episode(msg):
     window.FindElement('gatherer' + gatherers[msg.server_uuid]).UpdateBar(gatherers_progress[msg.server_uuid])
     window.FindElement('gatherer_epi' + gatherers[msg.server_uuid]).Update(gatherers_progress_epi[msg.server_uuid])
 
+    rollout = exp_buffer.latest_rollout(config)
+    window.FindElement('trainer').UpdateBar(len(rollout))
 
 
 def rec_rollout(msg):
@@ -64,7 +67,8 @@ def gatherer_progressbars(number, max_episodes):
 
 
 def training_progress(msg):
-    window.FindElement('trainer').UpdateBar(int(msg.steps))
+    pass
+
 
 
 
@@ -93,6 +97,7 @@ if __name__ == '__main__':
     config = configs.LunarLander()
 
     r = Redis(host=args.redis_host, port=args.redis_port, password=args.redis_password)
+    exp_buffer = Db(host=args.redis_host, port=args.redis_port, password=args.redis_password)
 
     policy_net = PPOWrap(config.features, config.action_map, config.hidden)
     gui_uuid = uuid.uuid4()
@@ -108,12 +113,12 @@ if __name__ == '__main__':
     handler.register(StopMessage, rec_stop)
     handler.register(RolloutMessage, rec_rollout)
 
-    pbars, epi_count = gatherer_progressbars(5, 10000)
+    pbars, epi_count = gatherer_progressbars(5, config.num_steps_per_rollout)
 
     # Layout the design of the GUI
     layout = [
         [sg.Text('Please click a button', auto_size_text=True)],
-        [sg.ProgressBar(10000, orientation='h', size=(20, 20), key='trainer'), sg.Text('000000', key='wallclock')],
+        [sg.ProgressBar(config.num_steps_per_rollout, orientation='h', size=(20, 20), key='trainer'), sg.Text('000000', key='wallclock')],
         pbars,
         epi_count,
         [sg.Button('Start'),

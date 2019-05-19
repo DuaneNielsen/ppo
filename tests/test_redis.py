@@ -39,7 +39,7 @@ def test_redis_write_step(db):
     episode.append(data.Step(o1, 1, 1.0, False))
     episode.end()
 
-    rollout.end()
+    rollout.finalize()
 
     step = rollout[0]
     step = rollout[1]
@@ -177,7 +177,7 @@ def test_epi_iter(db):
     lookup[episode.id] = [o7, o8, o9]
     episode.end()
 
-    rollout.end()
+    rollout.finalize()
 
     assert len(rollout) == 9
 
@@ -215,7 +215,7 @@ def test_advantage(db):
     obs.append([o1, o2, o3])
     episode.end()
 
-    rollout.end()
+    rollout.finalize()
 
     dataset = data.RolloutDatasetBase(env_config, rollout)
 

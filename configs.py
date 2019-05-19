@@ -67,7 +67,7 @@ class BaseConfig:
         self.resume = False
         self.debug = False
         self.episodes_per_gatherer = 1
-        self.num_steps_per_rollout = 100000
+        self.num_steps_per_rollout = 1000
 
     def rundir(self, name='default'):
         return f'runs/{name}_{random.randint(0,1000)}'

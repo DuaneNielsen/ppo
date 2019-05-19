@@ -184,7 +184,7 @@ class TrainCompleteMessage(Message):
         server_uuid = d['server_uuid']
         policy = decode(d['policy'])
         config = decode(d['env_config'])
-        return TrainMessage(server_uuid, id, policy, config)
+        return TrainCompleteMessage(server_uuid, policy, config)
 
 
 class TrainingProgress(Message):

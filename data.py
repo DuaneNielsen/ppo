@@ -8,12 +8,14 @@ import redis
 import struct
 from bisect import bisect_right, bisect_left
 import uuid
+import redis_lock
 
 
 class RedisSequence:
     """
     Connects and manages sequences across threads
     """
+
     def __init__(self, redis, key, reset=False):
         self.redis = redis
         self.key = key
@@ -73,6 +75,7 @@ class RolloutDatasetBase(RolloutDatasetAbstract):
         """
         super().__init__()
         self.rollout = rollout
+        self.rollout.finalize()
         self.adv = [0.0 for _ in range(len(rollout))]
         self.start = 0
         self.discount_factor = env_config.discount_factor
@@ -90,12 +93,12 @@ class RolloutDatasetBase(RolloutDatasetAbstract):
 
     def advantage(self, episode):
 
-            cum_value = 0.0
-            offset = self.rollout.offset(episode)
+        cum_value = 0.0
+        offset = self.rollout.offset(episode)
 
-            for step in reversed(range(offset, offset + len(episode))):
-                cum_value = self.rollout[step].reward + cum_value * self.discount_factor
-                self.adv[step] = cum_value
+        for step in reversed(range(offset, offset + len(episode))):
+            cum_value = self.rollout[step].reward + cum_value * self.discount_factor
+            self.adv[step] = cum_value
 
     def total_reward(self):
         reward = 0.0
@@ -174,7 +177,7 @@ class Db:
         return RedisRollout(self.redis, env_config, self.rollout_seq.current())
 
     def delete_rollout(self, rollout):
-        #todo batch delete
+        # todo batch delete
         for key in self.redis.scan_iter(f'rollout-{rollout.id}*'):
             self.redis.delete(key)
 
@@ -191,17 +194,22 @@ class RedisRollout:
         self.len = 0
         self.env_config = env_config
 
-    def end(self):
+    def finalize(self):
         """
         Call before you generate a dataset
         This caches all the guids in the db at time of calling to a list
         creating a data structure which allows for fast access by the dataset object
         and fixing the length of the the dataset
         """
+
+        # todo, after, we set a flag that prevents further updates to the episode list and length
+
+        with redis_lock.Lock(self.redis, self.key('lock')):
+            self.redis.set(self.key('finalized'), 'FINALIZED')
         self.episodes = []
         self.episode_len = []
         for episode in range(self.num_episodes()):
-            self.episodes.append(self.redis.lindex(self.key(), episode).decode())
+            self.episodes.append(self.redis.lindex(self.key('episodes'), episode).decode())
 
         self.episodes = sorted(self.episodes)
 
@@ -214,13 +222,13 @@ class RedisRollout:
             self.episode_off.append(offset)
             offset += l
 
-        self.len = sum(self.episode_len)
-
     def create_episode(self):
-        return Episode(self, self.redis, 'rollout-' + str(self.id) + '-' + str(uuid.uuid4()))
+        return Episode(self, self.redis, self.key(str(uuid.uuid4())))
 
-    def key(self):
-        return f'r{self.id}'
+    def key(self, subkey=''):
+        if subkey == '':
+            return f'rollout-{self.id}'
+        return f'rollout-{self.id}-' + subkey
 
     @staticmethod
     def find_le(a, x):
@@ -240,7 +248,7 @@ class RedisRollout:
 
     def num_episodes(self):
         """ number of episodes in a rollout """
-        return self.redis.llen(self.key())
+        return self.redis.llen(self.key('episodes'))
 
     def get_index_for_episode(self, episode):
         if self.episodes is None:
@@ -273,7 +281,11 @@ class RedisRollout:
             for episode in rollout:
                 pass
         """
-        return self.len
+        steps = self.redis.get(self.key('steps'))
+        if steps is not None:
+            return int(steps)
+        else:
+            return 0
 
 
 class EpisodeIter:
@@ -319,7 +331,11 @@ class Episode:
     def end(self):
         if self.p is not None:
             self.p.execute()
-        self.redis.lpush(self.rollout.key(), self.id)
+
+        with redis_lock.Lock(self.redis, self.rollout.key('lock')):
+            if not self.redis.exists(self.rollout.key('finalized')):
+                self.redis.lpush(self.rollout.key('episodes'), self.id)
+                self.redis.incrby(self.rollout.key('steps'), len(self))
 
     def total_reward(self):
         return float(self.redis.get(self.total_reward_key))

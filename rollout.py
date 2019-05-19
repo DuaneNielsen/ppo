@@ -92,7 +92,7 @@ def rollout_policy(num_episodes, policy, config):
 
     torch.save(policy.state_dict(), config.rundir + f'/latest.wgt')
 
-    rollout.end()
+    rollout.finalize()
     return rollout
 
 

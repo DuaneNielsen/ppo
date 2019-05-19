@@ -149,34 +149,29 @@ class Trainer(Server):
         super().__init__(redis_host, redis_port, redis_db, redis_password)
         self.handler.register(TrainMessage, self.handle_train)
         duallog.setup('logs', 'trainer')
-        self.db = Db(host=redis_host, port=redis_port, db=redis_db, password=redis_password)
-        self.rollout = self.db.create_rollout(config)
+        self.exp_buffer = Db(host=redis_host, port=redis_port, db=redis_db, password=redis_password)
 
     def handle_train(self, msg):
-        self.rollout.end()
-        dataset = RolloutDatasetBase(config, self.rollout)
 
+        rollout = self.exp_buffer.latest_rollout(msg.config)
+        assert len(rollout) != 0
+        dataset = RolloutDatasetBase(config, rollout)
         policy = msg.policy
 
         logging.info('started training')
         train_policy(policy, dataset, msg.config)
         logging.info('training finished')
 
-        logging.info('deleting rollout')
-        self.db.delete_rollout(self.rollout)
-        self.rollout = self.db.create_rollout(config)
-        logging.info('deleted rollout')
-
-        logging.info('starting next rollout')
-        TrainCompleteMessage(self.id, policy, msg.config)
+        logging.info('training complete')
+        TrainCompleteMessage(self.id, policy, msg.config).send(self.r)
 
     def stopAll(self, msg):
         super().stopAll(msg)
-        self.steps = 0
 
 
-RUNNING = 'RUNNING'
+GATHERING = 'GATHERING'
 STOPPED = 'STOPPED'
+TRAINING = 'TRAINING'
 
 
 class Coordinator(Server):
@@ -184,41 +179,64 @@ class Coordinator(Server):
                  db_host='localhost', db_port=5432, db_name='policy_db', db_user='policy_user', db_password=None):
         super().__init__(redis_host, redis_port, redis_db, redis_password)
         self.db = PolicyDB(db_host=db_host, db_port=db_port, db_name=db_name, db_user=db_user, db_password=db_password)
-        # self.db=PolicyDB()
         self.exp_buffer = Db(host=redis_host, port=redis_port, db=redis_db, password=redis_password)
 
         self.handler.register(StartMessage, self.handle_start)
+        self.handler.register(StopMessage, self.handle_stop)
         self.handler.register(EpisodeMessage, self.handle_episode)
         self.handler.register(TrainCompleteMessage, self.handle_train_complete)
         self.config = None
+        self.policy = None
+        self.state = STOPPED
+        duallog.setup('logs', 'co-ordinator')
 
     def handle_start(self, msg):
+        self.stopped = False
+        self.state = GATHERING
         self.config = msg.config
-        policy_net = PPOWrap(self.config.features, self.config.action_map, self.config.hidden)
+        self.policy = PPOWrap(self.config.features, self.config.action_map, self.config.hidden)
         ResetMessage(self.id).send(r)
-        RolloutMessage(self.id, 0, policy_net, self.config, self.config.episodes_per_gatherer).send(r)
+
+        rollout = self.exp_buffer.latest_rollout(self.config)
+        if rollout is not None:
+            self.exp_buffer.delete_rollout(rollout)
+        rollout = self.exp_buffer.create_rollout(self.config)
+
+        RolloutMessage(self.id, rollout.id, self.policy, self.config, self.config.episodes_per_gatherer).send(r)
 
     def handle_episode(self, msg):
-        rollout = self.exp_buffer.latest_rollout(self.config)
-        steps = len(rollout)
-        if steps > config.num_steps_per_rollout:
-            logging.info('got data... sending stop')
-            StopMessage(self.id).send(self.r)
-            TrainMessage(self.id, msg.policy, self.config)
-        else:
-            RolloutMessage(self.id, 0, policy_net, self.config, self.config.episodes_per_gatherer).send(r)
+        if not self.stopped:
+            rollout = self.exp_buffer.latest_rollout(self.config)
+            steps = len(rollout)
+            logging.debug(int(steps))
+            if steps > config.num_steps_per_rollout and not self.state == TRAINING:
+                self.state = TRAINING
+                TrainMessage(self.id, self.policy, self.config).send(self.r)
+            elif self.state == GATHERING:
+                RolloutMessage(self.id, rollout.id, policy_net, self.config, self.config.episodes_per_gatherer).send(r)
 
     def handle_train_complete(self, msg):
+        self.policy = msg.policy
+        ResetMessage(self.id).send(r)
+        rollout = self.exp_buffer.latest_rollout(self.config)
+        self.exp_buffer.delete_rollout(rollout)
+        rollout = self.exp_buffer.create_rollout(self.config)
         if not self.stopped:
-            ResetMessage(self.id).send(r)
-            RolloutMessage(self.id, 0, msg.policy, self.config, self.config.episodes_per_gatherer).send(r)
+            RolloutMessage(self.id, rollout.id, msg.policy, self.config, self.config.episodes_per_gatherer).send(r)
+            self.state = GATHERING
+
+    def handle_stop(self, msg):
+        self.stopped = True
+        self.state = STOPPED
+        rollout = self.exp_buffer.latest_rollout(self.config)
+        self.exp_buffer.delete_rollout(rollout)
 
 
 class TensorBoardListener(Server):
     def __init__(self, redis_host, redis_port, redis_db, redis_password):
         super().__init__(redis_host, redis_port, redis_db, redis_password)
         # todo fix the hardcoded config
-        self.env_config = configs.LunarLander()
+        self.config = configs.LunarLander()
         self.handler.register(EpisodeMessage, self.episode)
         self.handler.register(StopAllMessage, self.stopAll)
         self.tb_step = 0
