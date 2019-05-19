@@ -26,6 +26,7 @@ class MessageDecoder:
         self.register(StartMessage)
         self.register(TrainMessage)
         self.register(TrainCompleteMessage)
+        self.register(ExitMessage)
 
     def register(self, message_class):
         """ Registers a message class's decode in a lookup table"""
@@ -127,6 +128,15 @@ class StoppedMessage(Message):
         return 'STOPPED'
 
 
+class ExitMessage(Message):
+    def __init__(self, server__uuid):
+        super().__init__(server__uuid)
+
+    @classmethod
+    def header(cls):
+        return 'EXIT'
+
+
 class TrainMessage(Message):
     def __init__(self, server_uuid, policy, config):
         super().__init__(server_uuid)
@@ -224,10 +234,10 @@ class EpisodeMessage(Message):
 
 
 class RolloutMessage(Message):
-    def __init__(self, server_uuid, id, policy, config, episodes):
+    def __init__(self, server_uuid, rollout_id, policy, config, episodes):
         super().__init__(server_uuid)
         self.policy = policy
-        self.id = int(id)
+        self.rollout_id = int(rollout_id)
         self.config = config
         self.episodes = episodes
 
@@ -238,7 +248,7 @@ class RolloutMessage(Message):
             (
                 f'{{ '
                 f'{self._header_content}, '
-                f'"id":"{self.id}", '
+                f'"rollout_id":"{self.rollout_id}", '
                 f'"policy":"{policy_pickle}", '
                 f'"env_config":"{env_pickle}", '
                 f'"episodes":"{self.episodes}" '
@@ -252,7 +262,7 @@ class RolloutMessage(Message):
     @classmethod
     def decode(cls, d):
         server_uuid = d['server_uuid']
-        id = d['id']
+        id = d['rollout_id']
         policy = decode(d['policy'])
         config = decode(d['env_config'])
         episodes = d['episodes']

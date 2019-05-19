@@ -13,55 +13,26 @@ from rollout import single_episode
 import gym
 import uuid
 from policy_db import PolicyDB
+import concurrent.futures
 
 
 class Server:
-    def __init__(self, redis_host, redis_port, redis_db, redis_password):
+    def __init__(self, redis_host='localhost', redis_port=6379, redis_db=0, redis_password=None, redis_client=None):
         self.id = uuid.uuid4()
-        self.redis_host = redis_host
-        self.redis_port = redis_port
-        self.redis_db = redis_db
-        self.redis_password = redis_password
-        self.r = redis.Redis(host=redis_host, port=redis_port, db=redis_db, password=redis_password)
+
+        if redis_client is not None:
+            self.r = redis_client
+        else:
+            self.r = redis.Redis(host=redis_host, port=redis_port, db=redis_db, password=redis_password)
+
         self.handler = MessageHandler(self.r, 'rollout')
+        self.handler.register(ExitMessage, self.exit)
 
     def main(self):
         self.handler.listen()
 
-
-class RolloutThread(threading.Thread):
-    def __init__(self, redis, redis_host, redis_port, redis_password, server_uuid, rollout_id, policy, config,
-                 num_episodes=10000):
-        super().__init__()
-        self.redis = redis
-        self.config = config
-        self._stop_event = threading.Event()
-        self.db = Db(host=redis_host, port=redis_port, password=redis_password)
-        self.server_uuid = server_uuid
-        self.policy = policy.to('cpu').eval()
-        self.env = gym.make(config.gym_env_string)
-        self.num_episodes = int(num_episodes)
-        self.rollout_id = rollout_id
-
-    def run(self):
-
-        # todo not sure about this way of getting the rollout, might add to a stale rollout by accident
-        rollout = self.db.latest_rollout(self.config)
-
-        for episode_number in range(1, self.num_episodes + 1):
-            logging.info(f'starting episode {episode_number} of {self.config.gym_env_string}')
-            episode = single_episode(self.env, self.config, self.policy, rollout)
-            EpisodeMessage(self.server_uuid, episode_number, len(episode), episode.total_reward()).send(self.redis)
-
-            if self.stopped():
-                logging.info('thread stopped, exiting')
-                break
-
-    def stop(self):
-        self._stop_event.set()
-
-    def stopped(self):
-        return self._stop_event.is_set()
+    def exit(self, msg):
+        raise SystemExit
 
 
 class Gatherer(Server):
@@ -69,13 +40,24 @@ class Gatherer(Server):
         super().__init__(redis_host, redis_port, redis_db, redis_password)
         self.handler.register(RolloutMessage, self.rollout)
         self.rollout_thread = None
+        self.exp_buffer = Db(host=redis_host, port=redis_port, password=redis_password)
+        self.redis = self.exp_buffer.redis
+        self.job = None
+
         duallog.setup('logs', f'gatherer-{self.id}-')
 
     def rollout(self, msg):
-        #todo lock so only 1 thread can run at a time
-        self.rollout_thread = RolloutThread(self.r, self.redis_host, self.redis_port, self.redis_password, self.id,
-                                            msg.id, msg.policy, msg.config, msg.episodes)
-        self.rollout_thread.start()
+
+        policy = msg.policy.to('cpu').eval()
+        env = gym.make(msg.config.gym_env_string)
+        rollout = self.exp_buffer.rollout(msg.rollout_id, msg.config)
+        episode_number = 0
+
+        while len(rollout) < msg.config.num_steps_per_rollout:
+            logging.info(f'starting episode {episode_number} of {msg.config.gym_env_string}')
+            episode = single_episode(env, msg.config, policy, rollout)
+            EpisodeMessage(self.id, episode_number, len(episode), episode.total_reward()).send(self.redis)
+            episode_number += 1
 
 
 class DemoThread(threading.Thread):
@@ -158,10 +140,10 @@ class Coordinator(Server):
         duallog.setup('logs', 'co-ordinator')
 
     def handle_start(self, msg):
-        self.stopped = False
         self.state = GATHERING
         self.config = msg.config
         self.policy = PPOWrap(self.config.features, self.config.action_map, self.config.hidden)
+
         ResetMessage(self.id).send(r)
 
         rollout = self.exp_buffer.latest_rollout(self.config)
@@ -172,31 +154,28 @@ class Coordinator(Server):
         RolloutMessage(self.id, rollout.id, self.policy, self.config, self.config.episodes_per_gatherer).send(r)
 
     def handle_episode(self, msg):
-        if not self.stopped:
+        if not self.state == STOPPED:
             rollout = self.exp_buffer.latest_rollout(self.config)
             steps = len(rollout)
             logging.debug(int(steps))
             if steps > config.num_steps_per_rollout and not self.state == TRAINING:
                 self.state = TRAINING
                 TrainMessage(self.id, self.policy, self.config).send(self.r)
-            elif self.state == GATHERING:
-                RolloutMessage(self.id, rollout.id, policy_net, self.config, self.config.episodes_per_gatherer).send(r)
 
     def handle_train_complete(self, msg):
         self.policy = msg.policy
         ResetMessage(self.id).send(r)
+
         rollout = self.exp_buffer.latest_rollout(self.config)
         self.exp_buffer.delete_rollout(rollout)
         rollout = self.exp_buffer.create_rollout(self.config)
-        if not self.stopped:
+
+        if not self.state == STOPPED:
             RolloutMessage(self.id, rollout.id, msg.policy, self.config, self.config.episodes_per_gatherer).send(r)
             self.state = GATHERING
 
     def handle_stop(self, msg):
-        self.stopped = True
         self.state = STOPPED
-        rollout = self.exp_buffer.latest_rollout(self.config)
-        self.exp_buffer.delete_rollout(rollout)
 
 
 class TensorBoardListener(Server):

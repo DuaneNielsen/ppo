@@ -153,23 +153,3 @@ def testMultiProcessRedisSquence(db):
             del ids2[i]
             for j in ids2:
                 assert j != item
-
-
-def testGatherers():
-    env_config = configs.LunarLander()
-    policy_net = PPOWrap(env_config.features, env_config.action_map, env_config.hidden)
-
-    t1 = TrainerThread()
-    g1 = GatherThread()
-
-    t1.start()
-    g1.start()
-
-    r = redis.Redis()
-
-    RolloutMessage(0, policy_net, env_config).send(r)
-
-    time.sleep(10)
-
-    t1.join()
-    g1.join()

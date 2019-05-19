@@ -160,10 +160,14 @@ class SingleProcessDataSet(SingleProcessDataSetAbstract):
 #             self.value = self.value + list(reversed(values))
 #             self.start = len(self.rollout)
 
+# todo I think these might be better as static methods on the RedisRollout class
 
 class Db:
-    def __init__(self, host='localhost', port=6379, password=None, db=0):
-        self.redis = redis.Redis(host=host, port=port, db=db, password=password)
+    def __init__(self, host='localhost', port=6379, password=None, db=0, redis_client=None):
+        if redis_client is None:
+            self.redis = redis.Redis(host=host, port=port, db=db, password=password)
+        else:
+            self.redis = redis_client
         self.rollout_seq = RedisSequence(self.redis, 'rollout')
 
     def drop(self):
@@ -204,8 +208,6 @@ class RedisRollout:
         creating a data structure which allows for fast access by the dataset object
         and fixing the length of the the dataset
         """
-
-        # todo, after, we set a flag that prevents further updates to the episode list and length
 
         with redis_lock.Lock(self.redis, self.key('lock')):
             self.redis.set(self.key('finalized'), 'FINALIZED')
