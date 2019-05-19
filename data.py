@@ -331,7 +331,6 @@ class Episode:
         self.total_reward_key = self.id + '_total_reward'
         self.batch = 0
         self.p = None
-        self.redis.set(self.total_reward_key, 0.0)
 
     def end(self):
         if self.p is not None:

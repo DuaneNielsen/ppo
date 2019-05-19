@@ -134,6 +134,7 @@ class Coordinator(Server):
         self.handler.register(StopMessage, self.handle_stop)
         self.handler.register(EpisodeMessage, self.handle_episode)
         self.handler.register(TrainCompleteMessage, self.handle_train_complete)
+        self.run_id = None
         self.config = None
         self.policy = None
         self.state = STOPPED
@@ -143,6 +144,7 @@ class Coordinator(Server):
         self.state = GATHERING
         self.config = msg.config
         self.policy = PPOWrap(self.config.features, self.config.action_map, self.config.hidden)
+        self.run_id = config.rundir(config.gym_env_string)
 
         ResetMessage(self.id).send(r)
 
@@ -159,7 +161,17 @@ class Coordinator(Server):
             steps = len(rollout)
             logging.debug(int(steps))
             if steps > config.num_steps_per_rollout and not self.state == TRAINING:
+                rollout.finalize()
                 self.state = TRAINING
+                total_reward = 0
+                for episode in rollout:
+                    total_reward += episode.total_reward()
+                ave_reward = total_reward / rollout.num_episodes()
+                stats = {'ave_reward_per_episode': ave_reward}
+                self.db.write_policy(self.run_id, self.state, self.policy.state_dict(), stats, config)
+                self.db.update_reservoir(self.run_id, config.policy_reservoir_depth)
+                self.db.update_best(self.run_id, config.policy_top_depth)
+                self.db.prune(self.run_id)
                 TrainMessage(self.id, self.policy, self.config).send(self.r)
 
     def handle_train_complete(self, msg):
