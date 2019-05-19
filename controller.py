@@ -24,25 +24,16 @@ class Server:
         self.redis_password = redis_password
         self.r = redis.Redis(host=redis_host, port=redis_port, db=redis_db, password=redis_password)
         self.handler = MessageHandler(self.r, 'rollout')
-        self.stopped = False
-        self.handler.register(ResetMessage, self.reset)
-        self.handler.register(StopAllMessage, self.stopAll)
 
     def main(self):
         self.handler.listen()
 
-    def reset(self, _):
-        self.stopped = False
-
-    def stopAll(self, msg):
-        self.stopped = True
-        StoppedMessage(self.id).send(self.r)
-
 
 class RolloutThread(threading.Thread):
-    def __init__(self, redis, redis_host, redis_port, redis_password, server_uuid, policy, config, num_episodes=10000):
+    def __init__(self, redis, redis_host, redis_port, redis_password, server_uuid, rollout_id, policy, config,
+                 num_episodes=10000):
         super().__init__()
-        self.redis=redis
+        self.redis = redis
         self.config = config
         self._stop_event = threading.Event()
         self.db = Db(host=redis_host, port=redis_port, password=redis_password)
@@ -50,6 +41,7 @@ class RolloutThread(threading.Thread):
         self.policy = policy.to('cpu').eval()
         self.env = gym.make(config.gym_env_string)
         self.num_episodes = int(num_episodes)
+        self.rollout_id = rollout_id
 
     def run(self):
 
@@ -76,26 +68,14 @@ class Gatherer(Server):
     def __init__(self, redis_host='localhost', redis_port=6379, redis_db=0, redis_password=None):
         super().__init__(redis_host, redis_port, redis_db, redis_password)
         self.handler.register(RolloutMessage, self.rollout)
-        self.handler.register(StopMessage, self.stop)
         self.rollout_thread = None
         duallog.setup('logs', f'gatherer-{self.id}-')
 
     def rollout(self, msg):
-        if not self.stopped:
-            self.rollout_thread = RolloutThread(self.r, self.redis_host, self.redis_port, self.redis_password, self.id, msg.policy, msg.config, msg.episodes)
-            self.rollout_thread.start()
-
-    def _stop(self):
-        if self.rollout_thread is not None:
-            self.rollout_thread.stop()
-            self.rollout_thread.join()
-
-    def stop(self, msg):
-        self._stop()
-
-    def stopAll(self, msg):
-        self._stop()
-        super().stopAll(msg)
+        #todo lock so only 1 thread can run at a time
+        self.rollout_thread = RolloutThread(self.r, self.redis_host, self.redis_port, self.redis_password, self.id,
+                                            msg.id, msg.policy, msg.config, msg.episodes)
+        self.rollout_thread.start()
 
 
 class DemoThread(threading.Thread):
@@ -113,20 +93,11 @@ class DemoThread(threading.Thread):
             logging.info(f'starting episode {episode_number} of {self.env_config.gym_env_string}')
             single_episode(self.env, self.env_config, self.policy, render=True)
 
-            if self.stopped():
-                logging.info('thread stopped, exiting')
-                break
-
-    def stop(self):
-        self._stop_event.set()
-
-    def stopped(self):
-        return self._stop_event.is_set()
-
 
 class DemoListener(Server):
     def __init__(self, redis_host='localhost', redis_port=6379, redis_db=0, redis_password=None):
         super().__init__(redis_host, redis_port, redis_db, redis_password)
+        #todo need a new message for demo server here
         self.handler.register(RolloutMessage, self.rollout)
         self.latest_policy = None
         self.demo_thread = None
@@ -152,7 +123,6 @@ class Trainer(Server):
         self.exp_buffer = Db(host=redis_host, port=redis_port, db=redis_db, password=redis_password)
 
     def handle_train(self, msg):
-
         rollout = self.exp_buffer.latest_rollout(msg.config)
         assert len(rollout) != 0
         dataset = RolloutDatasetBase(config, rollout)
@@ -164,9 +134,6 @@ class Trainer(Server):
 
         logging.info('training complete')
         TrainCompleteMessage(self.id, policy, msg.config).send(self.r)
-
-    def stopAll(self, msg):
-        super().stopAll(msg)
 
 
 GATHERING = 'GATHERING'
@@ -238,7 +205,6 @@ class TensorBoardListener(Server):
         # todo fix the hardcoded config
         self.config = configs.LunarLander()
         self.handler.register(EpisodeMessage, self.episode)
-        self.handler.register(StopAllMessage, self.stopAll)
         self.tb_step = 0
         # todo probably needs to be moved again!
         self.tb = self.config.getSummaryWriter(config.gym_env_string)
@@ -247,11 +213,6 @@ class TensorBoardListener(Server):
         self.tb.add_scalar('reward', msg.total_reward, self.tb_step)
         self.tb.add_scalar('epi_len', msg.steps, self.tb_step)
         self.tb_step += 1
-
-    def stopAll(self, msg):
-        self.tb_step = 0
-        # todo need to rethink how I'm doing this
-        self.tb = self.config.getSummaryWriter(config.gym_env_string)
 
 
 if __name__ == '__main__':

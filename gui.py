@@ -80,7 +80,7 @@ def start():
 
 
 def stop():
-    StopAllMessage(gui_uuid).send(r)
+    StopMessage(gui_uuid).send(r)
 
 
 if __name__ == '__main__':

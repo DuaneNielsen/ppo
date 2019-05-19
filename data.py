@@ -176,6 +176,9 @@ class Db:
     def latest_rollout(self, env_config):
         return RedisRollout(self.redis, env_config, self.rollout_seq.current())
 
+    def rollout(self, id, config):
+        return RedisRollout(self.redis, config, id)
+
     def delete_rollout(self, rollout):
         # todo batch delete
         for key in self.redis.scan_iter(f'rollout-{rollout.id}*'):
