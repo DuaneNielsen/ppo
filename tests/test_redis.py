@@ -8,7 +8,7 @@ from data import StepCoder, NumpyCoder, RedisSequence
 
 @pytest.fixture()
 def db():
-    db = data.Db()
+    db = data.Db(db=1)
     yield db
     db.drop()
 
@@ -270,3 +270,32 @@ def testRedisSequence(db):
     seq = RedisSequence(db.redis, 'test', reset=True)
     assert next(seq) == 0
     assert next(seq) == 1
+
+
+def testRedisLock():
+    from threading import Thread
+    from time import sleep
+    from redis import StrictRedis
+    import redis_lock
+
+    class Grabber(Thread):
+
+        def run(self):
+            db = StrictRedis(db=2)
+            with redis_lock.Lock(db, "name-of-the-lock"):
+                print("Got the lock. Doing some work ...")
+                sleep(5)
+
+    g = Grabber()
+    g.start()
+
+    sleep(1)
+
+    try:
+
+        db = StrictRedis(db=2)
+        with redis_lock.Lock(db, "name-of-the-lock"):
+            print("Doing more work")
+
+    except redis_lock.NotAcquired:
+        print('failed to aquire lock')

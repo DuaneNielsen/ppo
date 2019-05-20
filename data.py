@@ -211,21 +211,22 @@ class RedisRollout:
 
         with redis_lock.Lock(self.redis, self.key('lock')):
             self.redis.set(self.key('finalized'), 'FINALIZED')
-        self.episodes = []
-        self.episode_len = []
-        for episode in range(self.num_episodes()):
-            self.episodes.append(self.redis.lindex(self.key('episodes'), episode).decode())
+            self.episodes = []
+            self.episode_len = []
+            for episode in range(self.num_episodes()):
+                self.episodes.append(self.redis.lindex(self.key('episodes'), episode).decode())
 
-        self.episodes = sorted(self.episodes)
+            self.episodes = sorted(self.episodes)
 
-        for episode_id in self.episodes:
-            self.episode_len.append(len(Episode(self, self.redis, episode_id)))
+            for episode_id in self.episodes:
+                self.episode_len.append(len(Episode(self, self.redis, episode_id)))
 
-        self.episode_off = []
-        offset = 0
-        for l in self.episode_len:
-            self.episode_off.append(offset)
-            offset += l
+            self.episode_off = []
+            offset = 0
+            for l in self.episode_len:
+                self.episode_off.append(offset)
+                offset += l
+
 
     def create_episode(self):
         return Episode(self, self.redis, self.key(str(uuid.uuid4())))

@@ -154,7 +154,7 @@ class PolicyDB:
 
     def update_best(self, run, n=10):
         PolicyStore.update(best=False).where((PolicyStore.run == run) & (PolicyStore.best == True)).execute()
-        top_n = PolicyStore.select().where((PolicyStore.run == run)).order_by(-PolicyStore.stats['ave_reward_episode']).limit(n)
+        top_n = PolicyStore.select().where((PolicyStore.run == run)).order_by(PolicyStore.stats['ave_reward_episode']).limit(n)
         for record in top_n:
             record.best = True
             record.save()

@@ -167,7 +167,7 @@ class Coordinator(Server):
                 for episode in rollout:
                     total_reward += episode.total_reward()
                 ave_reward = total_reward / rollout.num_episodes()
-                stats = {'ave_reward_per_episode': ave_reward}
+                stats = {'ave_reward_episode': ave_reward}
                 self.db.write_policy(self.run_id, self.state, self.policy.state_dict(), stats, config)
                 self.db.update_reservoir(self.run_id, config.policy_reservoir_depth)
                 self.db.update_best(self.run_id, config.policy_top_depth)
