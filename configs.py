@@ -70,12 +70,7 @@ class BaseConfig:
         self.num_steps_per_rollout = 1000
         self.policy_reservoir_depth = 10
         self.policy_top_depth = 10
-
-    def rundir(self, name='default'):
-        return f'runs/{name}_{random.randint(0,1000)}'
-
-    def getSummaryWriter(self, name='default'):
-        return SummaryWriter(self.rundir(name))
+        self.run_id = ''
 
 
 class DiscreteConfig(BaseConfig):

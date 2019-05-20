@@ -6,6 +6,7 @@ from models import PPOWrap
 import uuid
 from datetime import datetime
 from data import Db
+import random
 
 # This design pattern simulates button callbacks
 # Note that callbacks are NOT a part of the package's interface to the
@@ -18,6 +19,7 @@ import duallog
 duallog.setup('logs', 'gui')
 
 rollout_time = None
+
 
 def episode(msg):
     global next_free_slot
@@ -76,6 +78,7 @@ def training_progress(msg):
 # The callback functions
 def start():
     ResetMessage(gui_uuid).send(r)
+    config.run_id = f'{config.gym_env_string}_{random.randint(0,1000)}'
     StartMessage(gui_uuid, config).send(r)
 
 

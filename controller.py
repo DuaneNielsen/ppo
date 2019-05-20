@@ -1,5 +1,4 @@
 import redis
-import configs
 import time
 import threading
 
@@ -13,7 +12,7 @@ from rollout import single_episode
 import gym
 import uuid
 from policy_db import PolicyDB
-import concurrent.futures
+import tensorboardX
 
 
 class Server:
@@ -90,7 +89,7 @@ class DemoListener(Server):
         if self.env:
             self.env.reset()
         else:
-            self.env = gym.make(config.gym_env_string)
+            self.env = gym.make(msg.config.gym_env_string)
         self.latest_policy = msg.policy
         if self.demo_thread is None or not self.demo_thread.isAlive():
             self.demo_thread = DemoThread(msg.policy, msg.env_config, self.env)
@@ -107,7 +106,7 @@ class Trainer(Server):
     def handle_train(self, msg):
         rollout = self.exp_buffer.latest_rollout(msg.config)
         assert len(rollout) != 0
-        dataset = RolloutDatasetBase(config, rollout)
+        dataset = RolloutDatasetBase(msg.config, rollout)
         policy = msg.policy
 
         logging.info('started training')
@@ -134,7 +133,6 @@ class Coordinator(Server):
         self.handler.register(StopMessage, self.handle_stop)
         self.handler.register(EpisodeMessage, self.handle_episode)
         self.handler.register(TrainCompleteMessage, self.handle_train_complete)
-        self.run_id = None
         self.config = None
         self.policy = None
         self.state = STOPPED
@@ -144,7 +142,6 @@ class Coordinator(Server):
         self.state = GATHERING
         self.config = msg.config
         self.policy = PPOWrap(self.config.features, self.config.action_map, self.config.hidden)
-        self.run_id = config.rundir(config.gym_env_string)
 
         ResetMessage(self.id).send(r)
 
@@ -160,7 +157,7 @@ class Coordinator(Server):
             rollout = self.exp_buffer.latest_rollout(self.config)
             steps = len(rollout)
             logging.debug(int(steps))
-            if steps > config.num_steps_per_rollout and not self.state == TRAINING:
+            if steps > self.config.num_steps_per_rollout and not self.state == TRAINING:
                 rollout.finalize()
                 self.state = TRAINING
                 total_reward = 0
@@ -168,10 +165,10 @@ class Coordinator(Server):
                     total_reward += episode.total_reward()
                 ave_reward = total_reward / rollout.num_episodes()
                 stats = {'ave_reward_episode': ave_reward}
-                self.db.write_policy(self.run_id, self.state, self.policy.state_dict(), stats, config)
-                self.db.update_reservoir(self.run_id, config.policy_reservoir_depth)
-                self.db.update_best(self.run_id, config.policy_top_depth)
-                self.db.prune(self.run_id)
+                self.db.write_policy(self.config.run_id, self.state, self.policy.state_dict(), stats, self.config)
+                self.db.update_reservoir(self.config.run_id, self.config.policy_reservoir_depth)
+                self.db.update_best(self.config.run_id, self.config.policy_top_depth)
+                self.db.prune(self.config.run_id)
                 TrainMessage(self.id, self.policy, self.config).send(self.r)
 
     def handle_train_complete(self, msg):
@@ -193,12 +190,14 @@ class Coordinator(Server):
 class TensorBoardListener(Server):
     def __init__(self, redis_host, redis_port, redis_db, redis_password):
         super().__init__(redis_host, redis_port, redis_db, redis_password)
-        # todo fix the hardcoded config
-        self.config = configs.LunarLander()
         self.handler.register(EpisodeMessage, self.episode)
+        self.handler.register(StartMessage, self.start)
         self.tb_step = 0
-        # todo probably needs to be moved again!
-        self.tb = self.config.getSummaryWriter(config.gym_env_string)
+        self.tb = tensorboardX.SummaryWriter('runs/default')
+
+    def start(self, msg):
+        self.tb_step = 0
+        self.tb = tensorboardX.SummaryWriter('runs/' + msg.config.run_id)
 
     def episode(self, msg):
         self.tb.add_scalar('reward', msg.total_reward, self.tb_step)
@@ -245,10 +244,6 @@ if __name__ == '__main__':
 
     print(args)
 
-    config = configs.LunarLander()
-
-    policy_net = PPOWrap(config.features, config.action_map, config.hidden)
-
     while True:
         try:
             r = redis.Redis(host=args.redis_host, port=args.redis_port, password=args.redis_password)
@@ -274,13 +269,7 @@ if __name__ == '__main__':
         demo.main()
 
     elif args.coordinator:
-        demo = Coordinator(args.redis_host, args.redis_port, args.redis_db, args.redis_password,
+        co_ordinator = Coordinator(args.redis_host, args.redis_port, args.redis_db, args.redis_password,
                            args.postgres_host, args.postgres_port, args.postgres_db, args.postgres_user,
                            args.postgres_password)
-        demo.main()
-
-    elif args.start:
-        ResetMessage(uuid.uuid4()).send(r)
-        RolloutMessage(uuid.uuid4(), 0, policy_net, config).send(r)
-    elif args.stopall:
-        StopAllMessage(uuid.uuid4()).send(r)
+        co_ordinator.main()
