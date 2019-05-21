@@ -4,7 +4,12 @@ import configs
 import pytest
 from statistics import mean, stdev
 from data import StepCoder, NumpyCoder, RedisSequence
-
+from threading import Thread
+from time import sleep
+from redis import StrictRedis
+import redis_lock
+import redlock
+from redis.lock import Lock
 
 @pytest.fixture()
 def db():
@@ -273,11 +278,6 @@ def testRedisSequence(db):
 
 
 def testRedisLock():
-    from threading import Thread
-    from time import sleep
-    from redis import StrictRedis
-    import redis_lock
-
     class Grabber(Thread):
 
         def run(self):
@@ -299,3 +299,36 @@ def testRedisLock():
 
     except redis_lock.NotAcquired:
         print('failed to aquire lock')
+
+def testRedlock():
+
+    print('\nstarting test')
+    dlm = redlock.Redlock([{"host": "localhost", "port": 6379, "db": 2}, ], retry_count=200)
+
+    class Grabber(Thread):
+        def run(self):
+            print('grabbing lock')
+            my_lock = dlm.lock("my_resource_name", 10000)
+            print('lock aquired')
+            sleep(4)
+            print('releasing lock')
+            dlm.unlock(my_lock)
+            print('lock released')
+
+    g = Grabber().start()
+
+    sleep(1)
+
+    print('main grabbing lock')
+    my_lock = dlm.lock("my_resource_name", 5000)
+    if my_lock:
+        print('main got lock')
+        dlm.unlock(my_lock)
+    else:
+        print('main did not get lock')
+
+def testRedisNativeLock(db):
+
+    l = Lock(db.redis, 'zelock', timeout=3.0)
+    l.acquire()
+    l.release()

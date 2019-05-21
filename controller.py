@@ -157,7 +157,7 @@ class Coordinator(Server):
             rollout = self.exp_buffer.latest_rollout(self.config)
             steps = len(rollout)
             logging.debug(int(steps))
-            if steps > self.config.num_steps_per_rollout and not self.state == TRAINING:
+            if steps >= self.config.num_steps_per_rollout and not self.state == TRAINING:
                 rollout.finalize()
                 self.state = TRAINING
                 total_reward = 0

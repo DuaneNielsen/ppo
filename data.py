@@ -8,7 +8,9 @@ import redis
 import struct
 from bisect import bisect_right, bisect_left
 import uuid
-import redis_lock
+from redis.lock import Lock
+import logging
+import duallog
 
 
 class RedisSequence:
@@ -209,23 +211,30 @@ class RedisRollout:
         and fixing the length of the the dataset
         """
 
-        with redis_lock.Lock(self.redis, self.key('lock')):
-            self.redis.set(self.key('finalized'), 'FINALIZED')
-            self.episodes = []
-            self.episode_len = []
-            for episode in range(self.num_episodes()):
-                self.episodes.append(self.redis.lindex(self.key('episodes'), episode).decode())
+        lockname = self.key('lock')
+        lk = Lock(self.redis, lockname)
+        logging.debug(f'getting lock {lockname}')
+        lk.acquire()
+        logging.debug(f'getting lock {lockname}')
+        self.redis.set(self.key('finalized'), 'FINALIZED')
+        lk.release()
+        logging.debug(f'released lock {lockname}')
 
-            self.episodes = sorted(self.episodes)
+        self.episodes = []
+        self.episode_len = []
+        for episode in range(self.num_episodes()):
+            self.episodes.append(self.redis.lindex(self.key('episodes'), episode).decode())
 
-            for episode_id in self.episodes:
-                self.episode_len.append(len(Episode(self, self.redis, episode_id)))
+        self.episodes = sorted(self.episodes)
 
-            self.episode_off = []
-            offset = 0
-            for l in self.episode_len:
-                self.episode_off.append(offset)
-                offset += l
+        for episode_id in self.episodes:
+            self.episode_len.append(len(Episode(self, self.redis, episode_id)))
+
+        self.episode_off = []
+        offset = 0
+        for l in self.episode_len:
+            self.episode_off.append(offset)
+            offset += l
 
 
     def create_episode(self):
@@ -337,13 +346,26 @@ class Episode:
         if self.p is not None:
             self.p.execute()
 
-        with redis_lock.Lock(self.redis, self.rollout.key('lock')):
-            if not self.redis.exists(self.rollout.key('finalized')):
-                self.redis.lpush(self.rollout.key('episodes'), self.id)
-                self.redis.incrby(self.rollout.key('steps'), len(self))
+        lockname = self.rollout.key('lock')
+        lk = Lock(self.redis, lockname)
+        logging.debug(f'getting lock {lockname}')
+        lk.acquire()
+        logging.debug(f'got lock {lockname}')
+
+        if not self.redis.exists(self.rollout.key('finalized')):
+            self.redis.lpush(self.rollout.key('episodes'), self.id)
+            self.redis.incrby(self.rollout.key('steps'), len(self))
+
+        lk.release()
+        logging.debug(f'released lock {lockname}')
 
     def total_reward(self):
-        return float(self.redis.get(self.total_reward_key))
+        try:
+            total = float(self.redis.get(self.total_reward_key))
+            return total
+        except ValueError:
+            logging.error('Value error while getting total reward, returning 0')
+            return 0
 
     def append(self, step, batch=1):
         encoded = self.rollout.env_config.step_coder.encode(step)
