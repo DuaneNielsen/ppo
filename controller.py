@@ -100,6 +100,21 @@ class Coordinator(Server):
         self.policy = None
         self.state = STOPPED
         duallog.setup('logs', 'co-ordinator')
+        self.resume()
+
+    def resume(self):
+        run = self.db.latest_run()
+        record = self.db.best(run.run).get()
+        self.config = record.config_b
+
+        self.exp_buffer.clear_rollouts()
+        rollout = self.exp_buffer.create_rollout(self.config)
+        self.policy = PPOWrap(self.config.features, self.config.action_map, self.config.hidden)
+        self.policy.load_state_dict(record.policy)
+
+        self.state = GATHERING
+
+        RolloutMessage(self.id, rollout.id, self.policy, self.config, self.config.episodes_per_gatherer).send(r)
 
     def handle_start(self, msg):
         self.state = GATHERING
