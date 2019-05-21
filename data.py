@@ -366,7 +366,7 @@ class Episode:
         try:
             total = float(self.redis.get(self.total_reward_key))
             return total
-        except ValueError or TypeError:
+        except (ValueError, TypeError):
             logging.error('Error while getting total reward, returning 0')
             return 0
 
