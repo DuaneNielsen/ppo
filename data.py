@@ -363,8 +363,8 @@ class Episode:
         try:
             total = float(self.redis.get(self.total_reward_key))
             return total
-        except ValueError:
-            logging.error('Value error while getting total reward, returning 0')
+        except ValueError or TypeError:
+            logging.error('Error while getting total reward, returning 0')
             return 0
 
     def append(self, step, batch=1):

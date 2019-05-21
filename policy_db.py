@@ -170,3 +170,6 @@ class PolicyDB:
 
     def runs(self):
         return [record.run for record in PolicyStore.select(PolicyStore.run).distinct()]
+
+    def latest_run(self):
+        return PolicyStore.select(PolicyStore).order_by(-PolicyStore.timestamp).get()

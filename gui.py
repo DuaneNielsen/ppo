@@ -7,6 +7,10 @@ import uuid
 from datetime import datetime
 from data import Db
 import random
+import multiprocessing
+from rollout import single_episode
+from policy_db import PolicyDB
+import gym
 
 # This design pattern simulates button callbacks
 # Note that callbacks are NOT a part of the package's interface to the
@@ -72,9 +76,6 @@ def training_progress(msg):
     pass
 
 
-
-
-
 # The callback functions
 def start():
     ResetMessage(gui_uuid).send(r)
@@ -86,6 +87,34 @@ def stop():
     StopMessage(gui_uuid).send(r)
 
 
+def demo():
+    run = policy_db.latest_run()
+    record = policy_db.best(run.run).get()
+    env = gym.make(record.config_b.gym_env_string)
+    policy_net = PPOWrap(record.config_b.features, record.config_b.action_map, record.config_b.hidden)
+    policy_net.load_state_dict(record.policy)
+    demo = DemoThread(policy_net, record.config_b, env)
+    demo.start()
+
+
+class DemoThread(multiprocessing.Process):
+    def __init__(self, policy, env_config, env, num_episodes=1):
+        super().__init__()
+        self.env_config = env_config
+        self.policy = policy.to('cpu').eval()
+        self.num_episodes = num_episodes
+        self.env = env
+
+    def run(self):
+
+        for episode_number in range(self.num_episodes):
+            logging.info(f'starting episode {episode_number} of {self.env_config.gym_env_string}')
+            single_episode(self.env, self.env_config, self.policy, render=True)
+
+        self.env.close()
+        logging.debug('exiting')
+
+
 if __name__ == '__main__':
 
     from argparse import ArgumentParser
@@ -95,14 +124,26 @@ if __name__ == '__main__':
     parser.add_argument("-rh", "--redis-host", help='hostname of redis server', dest='redis_host', default='localhost')
     parser.add_argument("-rp", "--redis-port", help='port of redis server', dest='redis_port', default=6379)
     parser.add_argument("-ra", "--redis-password", help='password of redis server', dest='redis_password', default=None)
+
+    parser.add_argument("-ph", "--postgres-host", help='hostname of postgres server', dest='postgres_host',
+                        default='localhost')
+    parser.add_argument("-pp", "--postgres-port", help='port of postgres server', dest='postgres_port', default=5432)
+    parser.add_argument("-pd", "--postgres-db", help='hostname of postgres db', dest='postgres_db',
+                        default='policy_db')
+    parser.add_argument("-pu", "--postgres-user", help='hostname of postgres user', dest='postgres_user',
+                        default='policy_user')
+    parser.add_argument("-pa", "--postgres-password", help='password of postgres server', dest='postgres_password',
+                        default='password')
+
     args = parser.parse_args()
 
     config = configs.LunarLander()
 
     r = Redis(host=args.redis_host, port=args.redis_port, password=args.redis_password)
     exp_buffer = Db(host=args.redis_host, port=args.redis_port, password=args.redis_password)
+    policy_db = PolicyDB(args.postgres_host, args.postgres_password, args.postgres_user, args.postgres_db, args.postgres_port)
 
-    policy_net = PPOWrap(config.features, config.action_map, config.hidden)
+
     gui_uuid = uuid.uuid4()
 
     gatherers = {}
@@ -126,6 +167,7 @@ if __name__ == '__main__':
         epi_count,
         [sg.Button('Start'),
          sg.Button('Stop'),
+         sg.Button('Demo'),
          sg.Quit()]
     ]
 
@@ -141,6 +183,8 @@ if __name__ == '__main__':
             start()
         elif event == 'Stop':
             stop()
+        elif event == 'Demo':
+            demo()
         elif event == 'Quit' or event is None:
             window.Close()
             break

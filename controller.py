@@ -59,43 +59,6 @@ class Gatherer(Server):
             episode_number += 1
 
 
-class DemoThread(threading.Thread):
-    def __init__(self, policy, env_config, env, num_episodes=1):
-        super().__init__()
-        self.env_config = env_config
-        self._stop_event = threading.Event()
-        self.policy = policy.to('cpu').eval()
-        self.num_episodes = num_episodes
-        self.env = env
-
-    def run(self):
-
-        for episode_number in range(self.num_episodes):
-            logging.info(f'starting episode {episode_number} of {self.env_config.gym_env_string}')
-            single_episode(self.env, self.env_config, self.policy, render=True)
-
-
-class DemoListener(Server):
-    def __init__(self, redis_host='localhost', redis_port=6379, redis_db=0, redis_password=None):
-        super().__init__(redis_host, redis_port, redis_db, redis_password)
-        #todo need a new message for demo server here
-        self.handler.register(RolloutMessage, self.rollout)
-        self.latest_policy = None
-        self.demo_thread = None
-        self.env = None
-        duallog.setup('logs', f'demo_listener-{self.id}-')
-
-    def rollout(self, msg):
-        if self.env:
-            self.env.reset()
-        else:
-            self.env = gym.make(msg.config.gym_env_string)
-        self.latest_policy = msg.policy
-        if self.demo_thread is None or not self.demo_thread.isAlive():
-            self.demo_thread = DemoThread(msg.policy, msg.env_config, self.env)
-            self.demo_thread.start()
-
-
 class Trainer(Server):
     def __init__(self, redis_host='localhost', redis_port=6379, redis_db=0, redis_password=None):
         super().__init__(redis_host, redis_port, redis_db, redis_password)
@@ -218,8 +181,6 @@ if __name__ == '__main__':
                        action="store_true")
     group.add_argument("-m", "--monitor", help="start a monitoring instance",
                        action="store_true")
-    group.add_argument("-d", "--demo", help="start a demo instance",
-                       action="store_true")
     group.add_argument("--start", help="start training",
                        action="store_true")
     group.add_argument("--stopall", help="stop training",
@@ -263,10 +224,6 @@ if __name__ == '__main__':
     elif args.monitor:
         tb = TensorBoardListener(args.redis_host, args.redis_port, args.redis_db, args.redis_password)
         tb.main()
-
-    elif args.demo:
-        demo = DemoListener(args.redis_host, args.redis_port, args.redis_db, args.redis_password)
-        demo.main()
 
     elif args.coordinator:
         co_ordinator = Coordinator(args.redis_host, args.redis_port, args.redis_db, args.redis_password,
