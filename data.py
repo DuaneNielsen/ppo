@@ -192,6 +192,10 @@ class Db:
 
         self.redis.delete(rollout.key())
 
+    def clear_rollouts(self):
+        for key in self.redis.scan_iter("rollout-*"):
+            self.redis.delete(key)
+
 
 class RedisRollout:
     def __init__(self, redis, env_config, id):
@@ -235,7 +239,6 @@ class RedisRollout:
         for l in self.episode_len:
             self.episode_off.append(offset)
             offset += l
-
 
     def create_episode(self):
         return Episode(self, self.redis, self.key(str(uuid.uuid4())))

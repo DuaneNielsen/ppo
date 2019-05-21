@@ -108,9 +108,7 @@ class Coordinator(Server):
 
         ResetMessage(self.id).send(r)
 
-        rollout = self.exp_buffer.latest_rollout(self.config)
-        if rollout is not None:
-            self.exp_buffer.delete_rollout(rollout)
+        self.exp_buffer.clear_rollouts()
         rollout = self.exp_buffer.create_rollout(self.config)
 
         RolloutMessage(self.id, rollout.id, self.policy, self.config, self.config.episodes_per_gatherer).send(r)
@@ -138,8 +136,7 @@ class Coordinator(Server):
         self.policy = msg.policy
         ResetMessage(self.id).send(r)
 
-        rollout = self.exp_buffer.latest_rollout(self.config)
-        self.exp_buffer.delete_rollout(rollout)
+        self.exp_buffer.clear_rollouts()
         rollout = self.exp_buffer.create_rollout(self.config)
 
         if not self.state == STOPPED:
