@@ -27,6 +27,7 @@ class MessageDecoder:
         self.register(TrainMessage)
         self.register(TrainCompleteMessage)
         self.register(ExitMessage)
+        self.register(ConfigUpdateMessage)
 
     def register(self, message_class):
         """ Registers a message class's decode in a lookup table"""
@@ -137,6 +138,8 @@ class ExitMessage(Message):
         return 'EXIT'
 
 
+
+
 class TrainMessage(Message):
     def __init__(self, server_uuid, policy, config):
         super().__init__(server_uuid)
@@ -165,6 +168,32 @@ class TrainMessage(Message):
         policy = decode(d['policy'])
         config = decode(d['env_config'])
         return TrainMessage(server_uuid, policy, config)
+
+
+class ConfigUpdateMessage(Message):
+    def __init__(self, server_uuid, config):
+        super().__init__(server_uuid)
+        self.config = config
+
+    def encode(self):
+        config_pickle = encode(self.config)
+        self.content = \
+            (
+                f'{{ '
+                f'{self._header_content}, '
+                f'"config":"{config_pickle}" '
+                f'}}'
+            )
+
+    @classmethod
+    def header(cls):
+        return 'config_update'
+
+    @classmethod
+    def decode(cls, d):
+        server_uuid = d['server_uuid']
+        config = decode(d['config'])
+        return ConfigUpdateMessage(server_uuid, config)
 
 
 class TrainCompleteMessage(Message):

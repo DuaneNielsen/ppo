@@ -83,10 +83,15 @@ class RolloutDatasetBase(RolloutDatasetAbstract):
         self.discount_factor = env_config.discount_factor
         self.transform = env_config.transform
 
-        # calculate advantage values
-        for episode in rollout:
-            self.advantage(episode)
-        self.normalize()
+        try:
+            # calculate advantage values
+            for episode in rollout:
+                self.advantage(episode)
+            self.normalize()
+        except Exception as e:
+            logging.error(e)
+            logging.error('exception while computing advantage')
+            raise e
 
     def normalize(self):
         mean = statistics.mean(self.adv)
@@ -221,8 +226,9 @@ class RedisRollout:
         lk.acquire()
         logging.debug(f'getting lock {lockname}')
         self.redis.set(self.key('finalized'), 'FINALIZED')
-        lk.release()
-        logging.debug(f'released lock {lockname}')
+        if lk.owned():
+            lk.release()
+            logging.debug(f'released lock {lockname}')
 
         self.episodes = []
         self.episode_len = []
@@ -359,8 +365,9 @@ class Episode:
             self.redis.lpush(self.rollout.key('episodes'), self.id)
             self.redis.incrby(self.rollout.key('steps'), len(self))
 
-        lk.release()
-        logging.debug(f'released lock {lockname}')
+        if lk.owned():
+            lk.release()
+            logging.debug(f'released lock {lockname}')
 
     def total_reward(self):
         try:

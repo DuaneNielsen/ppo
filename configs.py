@@ -89,6 +89,8 @@ class DiscreteConfig(BaseConfig):
         self.default_action = default_action
 
 
+
+
 class Pong:
     def __init__(self):
         self.gym_env_string = 'Pong-v0'
@@ -122,7 +124,32 @@ class LunarLander(DiscreteConfig):
         self.features = 8
         self.hidden = 8
         self.adversarial = False
-        self.default_save = ['lunar_lander/solved.wgt']
+        self.players = 1
+
+
+class CartPole(DiscreteConfig):
+    def __init__(self):
+        super().__init__(
+            gym_env_string='CartPole-v0',
+            step_coder=StepCoder(observation_coder=NumpyCoder(1, np.float64)),
+            action_map=[0, 1]
+        )
+        self.features = 4
+        self.hidden = 8
+        self.adversarial = False
+        self.players = 1
+
+
+class Acrobot(DiscreteConfig):
+    def __init__(self):
+        super().__init__(
+            gym_env_string='Acrobot-v1',
+            step_coder=StepCoder(observation_coder=NumpyCoder(1, np.float64)),
+            action_map=[0, 1, 2]
+        )
+        self.features = 6
+        self.hidden = 8
+        self.adversarial = False
         self.players = 1
 
 

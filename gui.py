@@ -115,6 +115,9 @@ class DemoThread(multiprocessing.Process):
         logging.debug('exiting')
 
 
+def update_config():
+    ConfigUpdateMessage(gui_uuid, config).send(r)
+
 if __name__ == '__main__':
 
     from argparse import ArgumentParser
@@ -137,7 +140,13 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
-    config = configs.LunarLander()
+    config_list = {
+        'CartPole-v0': configs.CartPole(),
+        'LunarLander-v2': configs.LunarLander(),
+        'Acrobot-v1': configs.Acrobot()
+    }
+
+    config = configs.CartPole()
 
     r = Redis(host=args.redis_host, port=args.redis_port, password=args.redis_password)
     exp_buffer = Db(host=args.redis_host, port=args.redis_port, password=args.redis_password)
@@ -165,9 +174,12 @@ if __name__ == '__main__':
         [sg.ProgressBar(config.num_steps_per_rollout, orientation='h', size=(20, 20), key='trainer'), sg.Text('000000', key='wallclock')],
         pbars,
         epi_count,
+        [sg.Drop(values=[c for c in config_list], auto_size_text=True, default_value='CartPole-v0', key='selected_config')],
+        [sg.Text('num_steps_per_rollout'), sg.In(default_text=str(config.num_steps_per_rollout), size=(10, 1), key='num_steps_per_rollout')],
         [sg.Button('Start'),
          sg.Button('Stop'),
          sg.Button('Demo'),
+         sg.Button('UpdateConfig'),
          sg.Quit()]
     ]
 
@@ -180,11 +192,16 @@ if __name__ == '__main__':
         event, value = window.Read(timeout=10)
         # Take appropriate action based on button
         if event == 'Start':
+            selected_config = value['selected_config']
+            config = config_list[selected_config]
             start()
         elif event == 'Stop':
             stop()
         elif event == 'Demo':
             demo()
+        elif event == 'UpdateConfig':
+            config.num_steps_per_rollout = int(value['num_steps_per_rollout'])
+            update_config()
         elif event == 'Quit' or event is None:
             window.Close()
             break

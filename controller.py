@@ -13,6 +13,7 @@ import gym
 import uuid
 from policy_db import PolicyDB
 import tensorboardX
+from time import sleep
 
 
 class Server:
@@ -26,9 +27,22 @@ class Server:
 
         self.handler = MessageHandler(self.r, 'rollout')
         self.handler.register(ExitMessage, self.exit)
+        self.retry_count = 0
 
     def main(self):
-        self.handler.listen()
+        while self.retry_count < 10:
+            try:
+                self.retry_count = 0
+                self.handler.listen()
+            except redis.exceptions.ConnectionError as e:
+                logging.error(e)
+                self.retry_count += 1
+                sleep(self.retry_count)
+                continue
+            except Exception as e:
+                logging.error(e)
+                self.retry_count += 1
+                continue
 
     def exit(self, msg):
         raise SystemExit
@@ -96,6 +110,7 @@ class Coordinator(Server):
         self.handler.register(StopMessage, self.handle_stop)
         self.handler.register(EpisodeMessage, self.handle_episode)
         self.handler.register(TrainCompleteMessage, self.handle_train_complete)
+        self.handler.register(ConfigUpdateMessage, self.handle_config_update)
         self.config = None
         self.policy = None
         self.state = STOPPED
@@ -160,6 +175,21 @@ class Coordinator(Server):
 
     def handle_stop(self, msg):
         self.state = STOPPED
+
+    def handle_config_update(self, msg):
+
+        run = self.db.latest_run()
+        record = self.db.best(run.run).get()
+        self.config = msg.config
+
+        self.exp_buffer.clear_rollouts()
+        rollout = self.exp_buffer.create_rollout(self.config)
+        self.policy = PPOWrap(self.config.features, self.config.action_map, self.config.hidden)
+        self.policy.load_state_dict(record.policy)
+
+        self.state = GATHERING
+
+        RolloutMessage(self.id, rollout.id, self.policy, self.config, self.config.episodes_per_gatherer).send(r)
 
 
 class TensorBoardListener(Server):
