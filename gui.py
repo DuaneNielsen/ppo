@@ -36,8 +36,8 @@ def episode(msg):
         next_free_slot += 1
 
     if int(msg.id) == 1:
-         gatherers_progress[msg.server_uuid] = 0
-         gatherers_progress_epi[msg.server_uuid] = 0
+        gatherers_progress[msg.server_uuid] = 0
+        gatherers_progress_epi[msg.server_uuid] = 0
 
     if msg.server_uuid in gatherers:
         gatherers_progress[msg.server_uuid] += int(msg.steps)
@@ -79,7 +79,7 @@ def training_progress(msg):
 # The callback functions
 def start():
     ResetMessage(gui_uuid).send(r)
-    config.run_id = f'{config.gym_env_string}_{random.randint(0,1000)}'
+    config.run_id = f'{config.gym_env_string}_{random.randint(0, 1000)}'
     StartMessage(gui_uuid, config).send(r)
 
 
@@ -106,7 +106,6 @@ class DemoThread(multiprocessing.Process):
         self.env = env
 
     def run(self):
-
         for episode_number in range(self.num_episodes):
             logging.info(f'starting episode {episode_number} of {self.env_config.gym_env_string}')
             single_episode(self.env, self.env_config, self.policy, render=True)
@@ -115,8 +114,46 @@ class DemoThread(multiprocessing.Process):
         logging.debug('exiting')
 
 
-def update_config():
+def update_config(value):
+    # todo need to read a config into UI first, then send the updated one
+    config.num_steps_per_rollout = int(value['num_steps_per_rollout'])
     ConfigUpdateMessage(gui_uuid, config).send(r)
+
+
+def filter_run(value):
+    env_string = value['FilterRun']
+    if env_string == 'all':
+        runs = policy_db.runs()
+    elif env_string == 'latest':
+        runs = policy_db.latest_run().run
+    else:
+        runs = policy_db.runs_for_env(env_string)
+
+    best = []
+    for run in runs:
+        row = policy_db.best(run).get()
+        best.append([run, row.stats['ave_reward_episode']])
+
+    best = sorted(best, key=lambda element: element[1], reverse=True)
+
+    window.FindElement('selected_run').Update(best)
+
+
+def selected_runs(value):
+    selected_run = value['selected_run']
+    selected_runs = []
+    if selected_run is not None:
+        for run in selected_run:
+            run = window.FindElement('selected_run').Values[selected_run[0]][0]
+            selected_runs.append(policy_db.get_latest(run))
+
+    return selected_runs
+
+
+def refresh_config_panel():
+    for name in config_panel_names:
+        window.FindElement(name).Update(config.__dict__[name])
+
 
 if __name__ == '__main__':
 
@@ -150,8 +187,8 @@ if __name__ == '__main__':
 
     r = Redis(host=args.redis_host, port=args.redis_port, password=args.redis_password)
     exp_buffer = Db(host=args.redis_host, port=args.redis_port, password=args.redis_password)
-    policy_db = PolicyDB(args.postgres_host, args.postgres_password, args.postgres_user, args.postgres_db, args.postgres_port)
-
+    policy_db = PolicyDB(args.postgres_host, args.postgres_password, args.postgres_user, args.postgres_db,
+                         args.postgres_port)
 
     gui_uuid = uuid.uuid4()
 
@@ -168,14 +205,53 @@ if __name__ == '__main__':
 
     pbars, epi_count = gatherer_progressbars(5, config.num_steps_per_rollout)
 
+    env_droplist_value = ['all', 'latest'] + [c for c in config_list]
+    env_droplist = sg.Drop(values=env_droplist_value, auto_size_text=True, key='FilterRun', enable_events=True,
+                           default_value='all')
+    policy_table = sg.Table([['                    ', '        ']],
+                            headings=['run', 'ave reward'], size=(80, 10), key='selected_run')
+
+
+    def config_element(field_name):
+        return [sg.Text(field_name, size=(20, 1)),
+                sg.In(default_text=str(config.__dict__[field_name]), size=(25, 1),
+                      key=field_name)]
+
+
+    config_panel_names = ['run_id', 'gym_env_string', 'num_steps_per_rollout', 'model_string', 'training_algo',
+                             'discount_factor', 'episodes_per_gatherer', 'max_rollout_len', 'policy_reservoir_depth']
+
+    config_panel_elements = []
+    for name in config_panel_names:
+        config_panel_elements.append(config_element(name))
+
+
+    config_panel = [sg.Frame(title='config', layout= config_panel_elements)]
+
+    run_panel = [sg.Frame(title='runs', layout=
+    [
+        [env_droplist],
+        [policy_table],
+        [sg.Button('LoadConfig'),
+         sg.Button('Refresh'),
+         sg.Button('DemoBest'),
+         sg.Button('DemoProgress'),
+         ]
+    ]
+
+                          )]
+
     # Layout the design of the GUI
     layout = [
         [sg.Text('Please click a button', auto_size_text=True)],
-        [sg.ProgressBar(config.num_steps_per_rollout, orientation='h', size=(20, 20), key='trainer'), sg.Text('000000', key='wallclock')],
+        [sg.ProgressBar(config.num_steps_per_rollout, orientation='h', size=(20, 20), key='trainer'),
+         sg.Text('000000', key='wallclock')],
         pbars,
         epi_count,
-        [sg.Drop(values=[c for c in config_list], auto_size_text=True, default_value='CartPole-v0', key='selected_config')],
-        [sg.Text('num_steps_per_rollout'), sg.In(default_text=str(config.num_steps_per_rollout), size=(10, 1), key='num_steps_per_rollout')],
+        [sg.Drop(values=[c for c in config_list], auto_size_text=True,
+                 default_value='CartPole-v0', key='selected_config')],
+        config_panel,
+        run_panel,
         [sg.Button('Start'),
          sg.Button('Stop'),
          sg.Button('Demo'),
@@ -186,11 +262,15 @@ if __name__ == '__main__':
     # Show the Window to the user
     window = sg.Window('Control Panel').Layout(layout)
 
+    # filter_run({'FilterRun': 'all'})
+
     # Event loop. Read buttons, make callbacks
     while True:
         # Read the Window
         event, value = window.Read(timeout=10)
         # Take appropriate action based on button
+        if event != '__TIMEOUT__':
+            print(event)
         if event == 'Start':
             selected_config = value['selected_config']
             config = config_list[selected_config]
@@ -200,11 +280,16 @@ if __name__ == '__main__':
         elif event == 'Demo':
             demo()
         elif event == 'UpdateConfig':
-            config.num_steps_per_rollout = int(value['num_steps_per_rollout'])
-            update_config()
+            update_config(value)
+        elif event == 'FilterRun':
+            filter_run(value)
+        elif event == 'LoadConfig':
+            selected = selected_runs(value)
+            if len(selected) == 1:
+                config = selected[0].config_b
+                refresh_config_panel()
         elif event == 'Quit' or event is None:
             window.Close()
             break
 
         handler.checkMessage()
-
