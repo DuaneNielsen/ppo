@@ -14,7 +14,7 @@ import uuid
 from policy_db import PolicyDB
 import tensorboardX
 from time import sleep
-
+import traceback
 
 class Server:
     def __init__(self, redis_host='localhost', redis_port=6379, redis_db=0, redis_password=None, redis_client=None):
@@ -27,6 +27,7 @@ class Server:
 
         self.handler = MessageHandler(self.r, 'rollout')
         self.handler.register(ExitMessage, self.exit)
+        self.handler.register(PingMessage, self.handle_ping)
         self.retry_count = 0
 
     def main(self):
@@ -41,11 +42,15 @@ class Server:
                 continue
             except Exception as e:
                 logging.error(e)
+                logging.debug(traceback.format_exc())
                 self.retry_count += 1
                 continue
 
     def exit(self, msg):
         raise SystemExit
+
+    def handle_ping(self, msg):
+        PongMessage(self.id, type(self).__name__).send(self.r)
 
 
 class Gatherer(Server):

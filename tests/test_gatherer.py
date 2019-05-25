@@ -63,3 +63,14 @@ def test_gatherer_processing(r):
     assert len(rollout) >= config.num_steps_per_rollout
     db.delete_rollout(rollout)
     ExitMessage(s.id).send(r)
+
+
+def test_gatherer_ping(r):
+    s = Gatherer()
+    ServerThread(s).start()
+
+    PingMessage(s.id).send(r)
+
+    sleep(1)
+
+    ExitMessage(s.id).send(r)

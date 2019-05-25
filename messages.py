@@ -28,6 +28,8 @@ class MessageDecoder:
         self.register(TrainCompleteMessage)
         self.register(ExitMessage)
         self.register(ConfigUpdateMessage)
+        self.register(PingMessage)
+        self.register(PongMessage)
 
     def register(self, message_class):
         """ Registers a message class's decode in a lookup table"""
@@ -138,6 +140,38 @@ class ExitMessage(Message):
         return 'EXIT'
 
 
+class PingMessage(Message):
+    def __init__(self, server__uuid):
+        super().__init__(server__uuid)
+
+    @classmethod
+    def header(cls):
+        return 'PING'
+
+
+class PongMessage(Message):
+    def __init__(self, server__uuid, server_info):
+        super().__init__(server__uuid)
+        self.server_info = server_info
+
+    def encode(self):
+        self.content = \
+            (
+                f'{{ '
+                f'{self._header_content}, '
+                f'"server_info":"{self.server_info}"'
+                f'}}'
+            )
+
+    @classmethod
+    def header(cls):
+        return 'PONG'
+
+    @classmethod
+    def decode(cls, d):
+        server_uuid = d['server_uuid']
+        server_info = d['server_info']
+        return PongMessage(server_uuid, server_info)
 
 
 class TrainMessage(Message):
