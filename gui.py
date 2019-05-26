@@ -11,6 +11,7 @@ import multiprocessing
 from rollout import single_episode
 from policy_db import PolicyDB
 import gym
+import time
 
 # This design pattern simulates button callbacks
 # Note that callbacks are NOT a part of the package's interface to the
@@ -25,26 +26,127 @@ duallog.setup('logs', 'gui')
 rollout_time = None
 
 
-def episode(msg):
-    global next_free_slot
+class MicroServiceBuffer:
+    def __init__(self):
+        self.services = {}
+        self.timeout = 10
 
-    # add a new slot if needed
-    if msg.server_uuid not in gatherers:
-        gatherers[msg.server_uuid] = str(next_free_slot)
-        gatherers_progress[msg.server_uuid] = 0
-        gatherers_progress_epi[msg.server_uuid] = 0
-        next_free_slot += 1
+    def __setitem__(self, key, service):
+        service.last_seen = time.time()
+        self.services[key] = service
+
+    def del_stale(self):
+        for id, service in self.services.items():
+            if time.time() - service.last_seen > self.timeout:
+                del self.services[id]
+
+    def items(self):
+        return self.services.items()
+
+    def values(self):
+        return self.services.values()
+
+    def __len__(self):
+        return len(self.services)
+
+    def __iter__(self):
+        return iter(self.services)
+
+    def __contains__(self, id):
+        if type(id) == str:
+            return id in self.services
+        if type(id) == MicroServiceRec:
+            return id.id in self.services
+
+    def __getitem__(self, key):
+        return self.services[key]
+
+    def __repr__(self):
+        image = ''
+        for key, service in self.items():
+            image += f'{key} : {service} \n'
+        return image
+
+
+class MicroServiceRec:
+    def __init__(self, id, server_info):
+        self.id = id
+        self.server_info = server_info
+        self.last_seen = time.time()
+
+    def __repr__(self):
+        return f'id : {self.id}, server_info : {self.server_info}, last_seen: {self.last_seen}, age: {time.time() - self.last_seen}'
+
+
+class ProgressMap:
+    def __init__(self, len, timeout=5):
+        self.server_2_slot = {}
+        self.slots = ['empty' for _ in range(len)]
+        self.epi = [0 for _ in range(len)]
+        self.steps = [0 for _ in range(len)]
+        self.last_updated = [0 for _ in range(len)]
+        self.timeout = timeout
+
+    def update(self, server_id, steps):
+        slot = self.get_slot(server_id)
+        if slot is not None:
+            self.epi[slot] += 1
+            self.steps[slot] += steps
+
+    def zero(self, server_id):
+        slot = self.get_slot(server_id)
+        if slot is not None:
+            self.epi[slot] = 0
+            self.steps[slot] = 0
+
+    def get_slot(self, server_id):
+        if server_id in self.server_2_slot:
+            return int(self.server_2_slot[server_id])
+        else:
+            return None
+
+    def update_bar(self, server_id):
+        slot = self.get_slot(server_id)
+        if slot is not None:
+            window.FindElement('gatherer' + str(slot)).UpdateBar(self.steps[slot])
+            window.FindElement('gatherer_epi' + str(slot)).Update(self.epi[slot])
+            self.last_updated[slot] = time.time()
+
+    def add(self, server_id):
+        for i, slot in enumerate(self.slots):
+            if slot == 'empty':
+                self.slots[i] = server_id
+                self.server_2_slot[server_id] = i
+                self.epi[i] = 0
+                self.steps[i] = 0
+                break
+
+    def free_slot(self, server_id):
+        dx = int(self.server_2_slot[server_id])
+        self.slots[dx] = 'empty'
+        del self.server_2_slot[server_id]
+
+    def clear_old(self):
+        now = time.time()
+        for slot, last in enumerate(self.last_updated):
+            if self.slots[slot] != 'empty' and now - last > self.timeout:
+                window.FindElement('gatherer' + str(slot)).UpdateBar(0)
+                window.FindElement('gatherer_epi' + str(slot)).Update(0)
+                self.free_slot(self.slots[slot])
+
+    def __contains__(self, server_id):
+        return server_id in self.server_2_slot
+
+
+def episode(msg):
+    if msg.server_uuid not in progress_map:
+        progress_map.add(msg.server_uuid)
 
     if int(msg.id) == 1:
-        gatherers_progress[msg.server_uuid] = 0
-        gatherers_progress_epi[msg.server_uuid] = 0
+        progress_map.zero(msg.server_uuid)
 
-    if msg.server_uuid in gatherers:
-        gatherers_progress[msg.server_uuid] += int(msg.steps)
-        gatherers_progress_epi[msg.server_uuid] += 1
-
-    window.FindElement('gatherer' + gatherers[msg.server_uuid]).UpdateBar(gatherers_progress[msg.server_uuid])
-    window.FindElement('gatherer_epi' + gatherers[msg.server_uuid]).Update(gatherers_progress_epi[msg.server_uuid])
+    progress_map.update(msg.server_uuid, msg.steps)
+    progress_map.update_bar(msg.server_uuid)
 
     rollout = exp_buffer.latest_rollout(config)
     window.FindElement('trainer').UpdateBar(len(rollout))
@@ -62,22 +164,12 @@ def rec_stop(msg):
         window.FindElement('wallclock').Update(str(walltime))
 
 
-def gatherer_progressbars(number, max_episodes):
-    pbars = []
-    epi_counters = []
-    for i in range(number):
-        pbars.append(sg.ProgressBar(max_episodes, orientation='v', size=(20, 20), key='gatherer' + str(i)))
-        epi_counters.append(sg.Text('0', size=(3, 2), key='gatherer_epi' + str(i)))
-
-    return pbars, epi_counters
-
-
 def training_progress(msg):
     pass
 
 
 # The callback functions
-def start():
+def start(config):
     ResetMessage(gui_uuid).send(r)
     StartMessage(gui_uuid, config).send(r)
 
@@ -95,6 +187,7 @@ def demo(run=None):
     policy_net.load_state_dict(record.policy)
     demo = DemoThread(policy_net, record.config_b, env)
     demo.start()
+
 
 class DemoThread(multiprocessing.Process):
     def __init__(self, policy, env_config, env, num_episodes=1):
@@ -143,7 +236,7 @@ def init_run_table():
     best = []
     for run in runs:
         row = policy_db.best(run).get()
-        best.append([run, row.stats['ave_reward_episode']])
+        best.append([run.ljust(25), str(row.stats['ave_reward_episode']).ljust(10)])
     return best
 
 
@@ -167,6 +260,24 @@ def new_run(value):
     config = config_list[value['selected_config']]
     config.run_id = f'{config.gym_env_string}_{random.randint(0, 1000)}'
     return config
+
+
+def refresh_progress_panel():
+    progress_map.clear_old()
+
+
+def handle_pong(msg):
+    if msg.server_uuid in services:
+        services[msg.server_uuid].last_seen = time.time()
+    else:
+        services[msg.server_uuid] = MicroServiceRec(msg.server_uuid, msg.server_info)
+
+    services.del_stale()
+    print(services)
+
+
+def heartbeat():
+    progress_map.clear_old()
 
 
 if __name__ == '__main__':
@@ -204,6 +315,9 @@ if __name__ == '__main__':
 
     gui_uuid = uuid.uuid4()
 
+    services = MicroServiceBuffer()
+    PingMessage(gui_uuid).send(r)
+
     gatherers = {}
     gatherers_progress = {}
     gatherers_progress_epi = {}
@@ -214,13 +328,36 @@ if __name__ == '__main__':
     handler.register(TrainingProgress, training_progress)
     handler.register(StopMessage, rec_stop)
     handler.register(RolloutMessage, rec_rollout)
+    handler.register(PongMessage, handle_pong)
 
     run = policy_db.latest_run()
     config = run.config_b
 
-    """ PROGRESS BARS """
+    """ PROGRESS PANEL """
 
-    pbars, epi_count = gatherer_progressbars(5, config.num_steps_per_rollout)
+    def init_progressbars():
+        pbars = []
+        epi_counters = []
+        for i in range(num_bars):
+            pbars.append(
+                sg.ProgressBar(config.num_steps_per_rollout, orientation='v', size=(20, 20), key='gatherer' + str(i)))
+            epi_counters.append(sg.Text('0', size=(3, 2), key='gatherer_epi' + str(i)))
+
+        return pbars, epi_counters
+
+    num_bars = 5
+    progress_map = ProgressMap(num_bars)
+
+    pbars, epi_count = init_progressbars()
+
+    progress_panel = [sg.Frame(title='progress', key='progress_panel', layout=
+    [
+        [sg.ProgressBar(config.num_steps_per_rollout, orientation='h', size=(20, 20), key='trainer'),
+         sg.Text('000000', key='wallclock')],
+        pbars,
+        epi_count
+    ]
+                               )]
 
     """ CONFIG PANEL """
 
@@ -239,6 +376,16 @@ if __name__ == '__main__':
         config_panel_elements.append(config_element(name))
 
     config_panel = [sg.Frame(title='config', layout=config_panel_elements)]
+
+    """ NEW RUN PANEL """
+
+    new_run_panel = [sg.Frame(title='new_run', layout=
+    [
+        [sg.Drop(values=[c for c in config_list], auto_size_text=True, default_value='CartPole-v0',
+                 key='selected_config'),
+         sg.Button('New Run')]
+    ]
+                              )]
 
     """ RUN PANEL """
 
@@ -261,25 +408,7 @@ if __name__ == '__main__':
     ]
                           )]
 
-    """ PROGRESS PANEL """
 
-    progress_panel = [sg.Frame(title='progress', layout=
-    [
-        [sg.ProgressBar(config.num_steps_per_rollout, orientation='h', size=(20, 20), key='trainer'),
-         sg.Text('000000', key='wallclock')],
-        pbars,
-        epi_count
-    ]
-    )]
-
-    """ NEW RUN PANEL """
-
-    new_run_panel = [sg.Frame(title='new_run', layout=
-                         [
-                             [sg.Drop(values=[c for c in config_list], auto_size_text=True, default_value='CartPole-v0', key='selected_config'),
-                              sg.Button('New Run')]
-                         ]
-                         )]
 
     # Layout the design of the GUI
     layout = [
@@ -297,17 +426,24 @@ if __name__ == '__main__':
     # Show the Window to the user
     window = sg.Window('Control Panel').Layout(layout)
 
+
+    heartbeat_freq = 2
+    time_last_beat = time.time()
+
     # Event loop. Read buttons, make callbacks
     while True:
         # Read the Window
         event, value = window.Read(timeout=10)
+
+        if time.time() - time_last_beat > heartbeat_freq:
+            heartbeat()
+            time_last_beat = time.time()
+
         # Take appropriate action based on button
         if event != '__TIMEOUT__':
             print(event)
         if event == 'Start':
-            selected_config = value['selected_config']
-            config = config_list[selected_config]
-            start()
+            start(config)
         elif event == 'Stop':
             stop()
         elif event == 'Demo':
