@@ -2,9 +2,9 @@ import logging
 import traceback
 import uuid
 from time import sleep
-
+import multiprocessing
 import redis
-
+import sched
 from messages import MessageHandler, ExitMessage, PingMessage, PongMessage
 
 
@@ -21,6 +21,7 @@ class Server:
         self.handler.register(ExitMessage, self.exit)
         self.handler.register(PingMessage, self.handle_ping)
         self.retry_count = 0
+        self._heartbeat = None
 
     def main(self):
         while self.retry_count < 10:
@@ -43,3 +44,28 @@ class Server:
 
     def handle_ping(self, msg):
         PongMessage(self.id, type(self).__name__).send(self.r)
+
+    def start_heartbeat(self, heartbeat_freq_seconds, func, **kwargs):
+        self._heartbeat = ServerHeartBeat(heartbeat_freq_seconds, func, **kwargs)
+        self._heartbeat.start()
+
+
+class ServerHeartBeat(multiprocessing.Process):
+    def __init__(self, heartbeat_frequency_seconds, func, **kwargs):
+        super().__init__()
+        self.schedule = sched.scheduler()
+        self.heartbeat_frequency_seconds = heartbeat_frequency_seconds
+        self.func = func
+        self.kwargs = kwargs
+
+    def run(self):
+        self.schedule.enter(0, 0, self.beat)
+        self.schedule.run()
+
+    def beat(self):
+        try:
+            logging.debug('HEARTBEAT')
+            self.func(**self.kwargs)
+
+        finally:
+            self.schedule.enter(self.heartbeat_frequency_seconds, 0, self.beat)

@@ -138,7 +138,13 @@ class ProgressMap:
         return server_id in self.server_2_slot
 
 
+update_count = 0
+
+
 def episode(msg):
+    global update_count
+    update_count += 1
+
     if msg.server_uuid not in progress_map:
         progress_map.add(msg.server_uuid)
 
@@ -146,12 +152,12 @@ def episode(msg):
         progress_map.zero(msg.server_uuid)
 
     progress_map.update(msg.server_uuid, msg.steps)
-    progress_map.update_bar(msg.server_uuid, msg.num_steps_per_rollout)
 
-    rollout = exp_buffer.latest_rollout(config)
-    window.FindElement('trainer').UpdateBar(len(rollout), msg.num_steps_per_rollout)
-    window.FindElement('num_steps_per_rollout').Update(msg.num_steps_per_rollout)
-
+    if update_count % 4:
+        progress_map.update_bar(msg.server_uuid, msg.num_steps_per_rollout)
+        rollout = exp_buffer.latest_rollout(config)
+        window.FindElement('trainer').UpdateBar(len(rollout), msg.num_steps_per_rollout)
+        window.FindElement('num_steps_per_rollout').Update(msg.num_steps_per_rollout)
 
 def rec_rollout(msg):
     global rollout_time

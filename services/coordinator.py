@@ -5,7 +5,9 @@ from data import Db
 from messages import StartMessage, StopMessage, EpisodeMessage, TrainCompleteMessage, ConfigUpdateMessage, \
     RolloutMessage, ResetMessage, TrainMessage
 from models import PPOWrap
-from policy_db import PolicyDB
+from policy_db import PolicyDB, PolicyStore
+import time
+
 
 GATHERING = 'GATHERING'
 STOPPED = 'STOPPED'
@@ -29,10 +31,12 @@ class Coordinator(Server):
         self.state = STOPPED
         duallog.setup('logs', 'co-ordinator')
         self.resume()
+        self.last_active = time.time()
+        self.start_heartbeat(5, self.heartbeat)
 
     def resume(self):
-        run = self.db.latest_run()
-        record = self.db.best(run.run).get()
+        record = self.db.latest_run()
+        self.state = record.run_state
         self.config = record.config_b
 
         self.exp_buffer.clear_rollouts()
@@ -40,9 +44,9 @@ class Coordinator(Server):
         self.policy = PPOWrap(self.config.features, self.config.action_map, self.config.hidden)
         self.policy.load_state_dict(record.policy)
 
-        self.state = GATHERING
-
-        RolloutMessage(self.id, rollout.id, self.policy, self.config, self.config.episodes_per_gatherer).send(self.r)
+        if self.state != STOPPED:
+            self.state = GATHERING
+            RolloutMessage(self.id, rollout.id, self.policy, self.config, self.config.episodes_per_gatherer).send(self.r)
 
     def handle_start(self, msg):
         self.state = GATHERING
@@ -74,6 +78,7 @@ class Coordinator(Server):
                 self.db.update_best(self.config.run_id, self.config.policy_top_depth)
                 self.db.prune(self.config.run_id)
                 TrainMessage(self.id, self.policy, self.config).send(self.r)
+        self.last_active = time.time()
 
     def handle_train_complete(self, msg):
         self.policy = msg.policy
@@ -85,9 +90,11 @@ class Coordinator(Server):
         if not self.state == STOPPED:
             RolloutMessage(self.id, rollout.id, msg.policy, self.config, self.config.episodes_per_gatherer).send(self.r)
             self.state = GATHERING
+        self.last_active = time.time()
 
     def handle_stop(self, msg):
         self.state = STOPPED
+        self.db.set_state_latest(STOPPED)
 
     def handle_config_update(self, msg):
 
@@ -104,4 +111,7 @@ class Coordinator(Server):
 
         RolloutMessage(self.id, rollout.id, self.policy, self.config, self.config.episodes_per_gatherer).send(self.r)
 
-
+    def heartbeat(self):
+        if self.state == GATHERING or self.state == TRAINING:
+            if self.last_active > self.config.timeout:
+                self.resume()

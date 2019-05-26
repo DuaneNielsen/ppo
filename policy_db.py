@@ -176,3 +176,8 @@ class PolicyDB:
 
     def latest_run(self):
         return PolicyStore.select(PolicyStore).order_by(-PolicyStore.timestamp).get()
+
+    def set_state_latest(self, state):
+        latest = self.latest_run()
+        latest.run_state = state
+        latest.save()

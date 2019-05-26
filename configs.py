@@ -71,6 +71,7 @@ class BaseConfig:
         self.policy_reservoir_depth = 10
         self.policy_top_depth = 10
         self.run_id = ''
+        self.timeout = 40
 
 
 class DiscreteConfig(BaseConfig):
