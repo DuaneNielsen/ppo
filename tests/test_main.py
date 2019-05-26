@@ -8,7 +8,9 @@ import threading
 import time
 import random
 from models import PPOWrap
-from controller import Gatherer, Trainer, Coordinator
+from services.trainer import Trainer
+from services.gatherer import Gatherer
+from services.coordinator import Coordinator
 from messages import RolloutMessage
 import redis
 

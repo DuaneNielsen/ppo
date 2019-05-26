@@ -1,5 +1,6 @@
 import pytest
-from controller import Server, Gatherer
+from services.server import Server
+from services.gatherer import Gatherer
 import redis
 from messages import *
 from threading import Thread
