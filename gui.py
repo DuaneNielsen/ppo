@@ -105,10 +105,10 @@ class ProgressMap:
         else:
             return None
 
-    def update_bar(self, server_id):
+    def update_bar(self, server_id, num_steps_per_rollout):
         slot = self.get_slot(server_id)
         if slot is not None:
-            window.FindElement('gatherer' + str(slot)).UpdateBar(self.steps[slot])
+            window.FindElement('gatherer' + str(slot)).UpdateBar(self.steps[slot], max=num_steps_per_rollout)
             window.FindElement('gatherer_epi' + str(slot)).Update(self.epi[slot])
             self.last_updated[slot] = time.time()
 
@@ -146,10 +146,11 @@ def episode(msg):
         progress_map.zero(msg.server_uuid)
 
     progress_map.update(msg.server_uuid, msg.steps)
-    progress_map.update_bar(msg.server_uuid)
+    progress_map.update_bar(msg.server_uuid, msg.num_steps_per_rollout)
 
     rollout = exp_buffer.latest_rollout(config)
     window.FindElement('trainer').UpdateBar(len(rollout))
+    window.FindElement('num_steps_per_rollout').Update(msg.num_steps_per_rollout)
 
 
 def rec_rollout(msg):
@@ -246,7 +247,7 @@ def selected_runs(value):
     if selected_run is not None:
         for index in selected_run:
             run = window.FindElement('selected_run').Values[index][0]
-            selected_runs.append(policy_db.get_latest(run))
+            selected_runs.append(policy_db.get_latest(run.strip()))
 
     return selected_runs
 
@@ -352,6 +353,7 @@ if __name__ == '__main__':
 
     progress_panel = [sg.Frame(title='progress', key='progress_panel', layout=
     [
+        [sg.Text('Steps per Rollout'), sg.Text('0000000', key='num_steps_per_rollout')],
         [sg.ProgressBar(config.num_steps_per_rollout, orientation='h', size=(20, 20), key='trainer'),
          sg.Text('000000', key='wallclock')],
         pbars,
@@ -433,7 +435,7 @@ if __name__ == '__main__':
     # Event loop. Read buttons, make callbacks
     while True:
         # Read the Window
-        event, value = window.Read(timeout=10)
+        event, value = window.Read(timeout=1)
 
         if time.time() - time_last_beat > heartbeat_freq:
             heartbeat()

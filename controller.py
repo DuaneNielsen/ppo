@@ -74,7 +74,8 @@ class Gatherer(Server):
         while len(rollout) < msg.config.num_steps_per_rollout:
             logging.info(f'starting episode {episode_number} of {msg.config.gym_env_string}')
             episode = single_episode(env, msg.config, policy, rollout)
-            EpisodeMessage(self.id, episode_number, len(episode), episode.total_reward()).send(self.redis)
+            EpisodeMessage(self.id, episode_number, len(episode), episode.total_reward(),
+                           msg.config.num_steps_per_rollout).send(self.redis)
             episode_number += 1
 
 

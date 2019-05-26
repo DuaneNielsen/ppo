@@ -278,14 +278,24 @@ class TrainingProgress(Message):
 
 
 class EpisodeMessage(Message):
-    def __init__(self, server_uuid, id, steps, total_reward):
+    def __init__(self, server_uuid, id, steps, total_reward, num_steps_rollout):
         super().__init__(server_uuid)
         self.id = id
         self.steps = int(steps)
         self.total_reward = float(total_reward)
+        self.num_steps_per_rollout = int(num_steps_rollout)
 
     def encode(self):
-        self.content = f'{{ {self._header_content}, "id":"{self.id}", "steps":"{self.steps}", "total_reward":"{self.total_reward}"}}'
+        self.content = \
+            (
+                f'{{ '
+                f'{self._header_content}, '
+                f'"id":"{self.id}", '
+                f'"steps":"{self.steps}", '
+                f'"total_reward":"{self.total_reward}", '
+                f'"num_steps_per_rollout":"{self.num_steps_per_rollout}" '
+                f'}}'
+            )
 
     @classmethod
     def header(cls):
@@ -293,7 +303,8 @@ class EpisodeMessage(Message):
 
     @classmethod
     def decode(cls, encoded):
-        return EpisodeMessage(encoded['server_uuid'], encoded['id'], encoded['steps'], encoded['total_reward'])
+        return EpisodeMessage(encoded['server_uuid'], encoded['id'], encoded['steps'],
+                              encoded['total_reward'], encoded['num_steps_per_rollout'])
 
 
 class RolloutMessage(Message):
