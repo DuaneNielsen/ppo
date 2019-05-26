@@ -149,7 +149,7 @@ def episode(msg):
     progress_map.update_bar(msg.server_uuid, msg.num_steps_per_rollout)
 
     rollout = exp_buffer.latest_rollout(config)
-    window.FindElement('trainer').UpdateBar(len(rollout))
+    window.FindElement('trainer').UpdateBar(len(rollout), msg.num_steps_per_rollout)
     window.FindElement('num_steps_per_rollout').Update(msg.num_steps_per_rollout)
 
 
