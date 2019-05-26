@@ -55,32 +55,39 @@ class TensorBoardCleaner(multiprocessing.Process):
 
 class TensorBoardStepWriter:
     def __init__(self, rundir):
-        self.file = Path(rundir) / 'global_step'
-        if not self.file.exists():
+        self.filepath = Path(rundir) / 'global_step'
+        self.f = self.filepath.open('rb+')
+        if not self.filepath.exists():
             self.write(0)
 
     def write(self, tb_step):
-        with self.file.open('wb') as f:
+        try:
             buffer = struct.pack('i', tb_step)
-            f.write(buffer)
-            f.flush()
-            f.close()
+            self.f.write(buffer)
+            self.f.flush()
+        except IOError:
+            raise
 
     def read(self):
-        with self.file.open('rb') as f:
-            buffer = f.read(4)
-            return struct.unpack('i', buffer)[0]
+        buffer = self.f.read(4)
+        return struct.unpack('i', buffer)[0]
 
     def increment(self):
-        with self.file.open('rb+') as f:
-            buffer = f.read(4)
+        try:
+            self.f.seek(0)
+            buffer = self.f.read(4)
             value = struct.unpack('i', buffer)[0]
-            f.seek(0)
+            self.f.seek(0)
             save_value = value + 1
             buffer = struct.pack('i', save_value)
-            f.write(buffer)
-            f.truncate()
+            self.f.write(buffer)
+            self.f.truncate()
             return value
+        except:
+            raise
+
+    def __del__(self):
+        self.f.close()
 
 
 class TensorBoardListener(Server):
