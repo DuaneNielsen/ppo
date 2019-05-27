@@ -56,15 +56,18 @@ class TensorBoardCleaner(multiprocessing.Process):
 class TensorBoardStepWriter:
     def __init__(self, rundir):
         self.filepath = Path(rundir) / 'global_step'
-        self.f = self.filepath.open('rb+')
         if not self.filepath.exists():
+            self.f = self.filepath.open('ab+')
             self.write(0)
+        else:
+            self.f = self.filepath.open('rb+')
 
     def write(self, tb_step):
         try:
             buffer = struct.pack('i', tb_step)
+            self.f.seek(0)
             self.f.write(buffer)
-            self.f.flush()
+            self.f.truncate()
         except IOError:
             raise
 
@@ -108,6 +111,7 @@ class TensorBoardListener(Server):
         self.db = PolicyDB(db_host=db_host, db_port=db_port, db_name=db_name, db_user=db_user, db_password=db_password)
         run = self.db.get_latest()
         rundir = 'runs/' + run.run
+        Path(rundir).mkdir(parents=True, exist_ok=True)
         self.tb = tensorboardX.SummaryWriter(rundir)
         self.tb_step = TensorBoardStepWriter(rundir)
 
@@ -117,8 +121,10 @@ class TensorBoardListener(Server):
     def start(self, msg):
         logging.info('Starting run ' + msg.config.run_id)
         rundir = 'runs/' + msg.config.run_id
-        self.tb_step = TensorBoardStepWriter(rundir)
+        Path(rundir).mkdir(parents=True, exist_ok=True)
         self.tb = tensorboardX.SummaryWriter(rundir)
+        self.tb_step = TensorBoardStepWriter(rundir)
+
 
     def episode(self, msg):
         tb_step = self.tb_step.increment()

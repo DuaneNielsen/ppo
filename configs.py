@@ -6,7 +6,7 @@ import numpy as np
 import torch
 from tensorboardX import SummaryWriter
 from torchvision.transforms.functional import to_tensor
-
+import gym
 import data
 from data import SingleProcessDataSet, StepCoder, NumpyCoder
 
@@ -149,6 +149,23 @@ class Acrobot(DiscreteConfig):
             action_map=[0, 1, 2]
         )
         self.features = 6
+        self.hidden = 8
+        self.adversarial = False
+        self.players = 1
+
+
+class MountainCar(DiscreteConfig):
+    def __init__(self):
+        gym_string = 'MountainCar-v0'
+        env = gym.make(gym_string)
+        dtype = env.reset().dtype
+        super().__init__(
+            gym_env_string=gym_string,
+            step_coder=StepCoder(observation_coder=NumpyCoder(1, dtype)),
+            action_map=[n for n in range(env.action_space.n)]
+        )
+
+        self.features = env.observation_space.shape[0]
         self.hidden = 8
         self.adversarial = False
         self.players = 1
