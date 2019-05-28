@@ -60,7 +60,7 @@ class TensorBoardStepWriter:
             self.f = self.filepath.open('ab+')
             self.write(0)
         else:
-            self.f = self.filepath.open('rb+')
+            self.f = self.filepath.open('ab+')
 
     def write(self, tb_step):
         try:

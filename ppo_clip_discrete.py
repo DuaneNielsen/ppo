@@ -16,6 +16,11 @@ import configs
 from data import RolloutDatasetBase
 import logging
 import duallog
+gpu_profile = False
+if gpu_profile:
+    from util import gpu_profile
+    import sys
+    sys.settrace(gpu_profile)
 
 
 def ppo_loss(newprob, oldprob, advantage, clip=0.2):
@@ -46,7 +51,6 @@ def train_policy(policy, rollout_dataset, config):
     batches = math.floor(len(rollout_dataset) / config.max_minibatch_size) + 1
     batch_size = math.floor(len(rollout_dataset) / batches)
     steps_per_batch = math.floor(12 / batches) if math.floor(12 / batches) > 0 else 1
-    #config.tb.add_scalar('batches', batches, config.tb_step)
 
     rollout_loader = DataLoader(rollout_dataset, batch_size=batch_size, shuffle=True)
     batches_p = 0
@@ -78,45 +82,6 @@ def train_policy(policy, rollout_dataset, config):
                 print(f'CHNGE {(torch.exp(updated_logprob) - torch.exp(new_logprob)).data[0]}')
                 print(f'NEW_G {torch.exp(new_logprob.grad.data[0])}')
 
-            # if config.device is 'cuda':
-            #     config.tb.add_scalar('memory_allocated', torch.cuda.memory_allocated(), config.tb_step)
-            #     config.tb.add_scalar('memory_cached', torch.cuda.memory_cached(), config.tb_step)
     logging.info(f'processed {batches_p} batches')
     if config.gpu_profile:
         gpu_profile(frame=sys._getframe(), event='line', arg=None)
-
-
-if __name__ == '__main__':
-
-    print('Starting')
-
-    # env_config = configs.AlphaDroneRacer()
-    # env_config = configs.Bouncer()
-    env_config = configs.LunarLander()
-    config = configs.Init(env_config.gym_env_string)
-
-    gpu_profile = False
-    if gpu_profile:
-        from util import gpu_profile
-        import sys
-
-        sys.settrace(gpu_profile)
-
-    print(f'Loaded {env_config.gym_env_string}')
-
-    policy_net = PPOWrap(env_config.features, env_config.action_map, env_config.hidden)
-    if config.resume:
-        policy_net.load_state_dict(torch.load('runs/AlphaRacer2D-v0_941/3.wgt'))
-
-    for epoch in range(config.num_epochs):
-        # if env_config.adversarial:
-        # rollout = rollout_adversarial_policy(policy_net, env_config)
-        # else:
-        rollout = rollout_policy(config.num_rollouts, policy_net, env_config, config)
-
-        dataset = RolloutDatasetBase(env_config, rollout)
-
-        config.tb.add_scalar('collected_frames', len(dataset), config.tb_step)
-        train_policy(policy_net, dataset, config)
-        torch.cuda.empty_cache()
-        # gpu_profile(frame=sys._getframe(), event='line', arg=None)

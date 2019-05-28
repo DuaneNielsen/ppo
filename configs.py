@@ -1,10 +1,8 @@
 import datetime
-import random
 
 import cv2
 import numpy as np
 import torch
-from tensorboardX import SummaryWriter
 from torchvision.transforms.functional import to_tensor
 import gym
 import data
@@ -29,49 +27,67 @@ class DefaultTransform:
             return torch.from_numpy(observation).float()
 
 
+class ModelConfig:
+    def __init__(self, name):
+        self.name = name
+
+
+class AlgoConfig:
+    def __init__(self, name):
+        self.name=name
+
+
+class EnvConfig:
+    def __init__(self, name):
+        self.name=name
+
+
+class MultiPolicyNet(ModelConfig):
+    def __init__(self, features, hidden_size, output_size):
+        super().__init__('MultiPolicyNet')
+        self.features = features
+        self.hidden_size = hidden_size
+        self.output_size = output_size
+
+
+class GymEnvConfig(EnvConfig):
+    def __init__(self, name):
+        super().__init__(name)
+
+
 class BaseConfig:
     def __init__(self,
                  gym_env_string,
                  step_coder,
                  discount_factor=0.99,
-                 max_rollout_len=3000,
                  prepro=DefaultPrePro(),
                  transform=DefaultTransform(),
                  ):
+
+        # environment config
         self.gym_env_string = gym_env_string
+
         self.training_algo = 'ppo'
         self.model_string = 'MultiPolicyNet'
         self.step_coder = step_coder
         self.discount_factor = discount_factor
-        self.max_rollout_len = max_rollout_len
+        self.max_rollout_len = 3000
         self.prepro = prepro
         self.transform = transform
-        self.episode_batch_size = 10
-        self.experience_threads = 30
-        self.print_tensor_sizes = True
-        self.gpu_profile = False
-        self.gpu_profile_fn = f'{datetime.datetime.now():%d-%b-%y-%H-%M-%S}-gpu_mem_prof.txt'
-        self.lineno = None
-        self.func_name = None
-        self.filename = None
-        self.module_name = None
-        self.tb_step = 0
-        self.save_freq = 1000
-        self.view_games = False
-        self.view_obs = False
-        self.num_epochs = 6000
-        self.num_rollouts = 60
-        self.collected_rollouts = 0
-        self.device = 'cpu' if torch.cuda.is_available() else 'cpu'
-        self.max_minibatch_size = 400000
-        self.resume = False
-        self.debug = False
+
         self.episodes_per_gatherer = 1
         self.num_steps_per_rollout = 1000
         self.policy_reservoir_depth = 10
         self.policy_top_depth = 10
         self.run_id = ''
         self.timeout = 40
+
+        self.gpu_profile = False
+        self.gpu_profile_fn = f'{datetime.datetime.now():%d-%b-%y-%H-%M-%S}-gpu_mem_prof.txt'
+        self.lineno = None
+        self.func_name = None
+        self.filename = None
+        self.module_name = None
 
 
 class DiscreteConfig(BaseConfig):
@@ -81,15 +97,39 @@ class DiscreteConfig(BaseConfig):
                  action_map,
                  default_action=0,
                  discount_factor=0.99,
-                 max_rollout_len=3000,
                  prepro=DefaultPrePro(),
                  transform=DefaultTransform(),
                  ):
-        super().__init__(gym_env_string, step_coder, discount_factor, max_rollout_len, prepro, transform)
+        super().__init__(gym_env_string, step_coder, discount_factor, prepro, transform)
         self.action_map = action_map
         self.default_action = default_action
 
 
+class ContinuousConfig(BaseConfig):
+    def __init__(self,
+                 gym_env_string,
+                 state_space_features,
+                 state_space_dtype,
+                 action_space,
+                 default_action=0.0,
+                 discount_factor=0.99,
+                 prepro=DefaultPrePro(),
+                 transform=DefaultTransform(),
+                 ):
+        step_coder = NumpyCoder(state_space_features, state_space_dtype)
+        super().__init__(gym_env_string, step_coder, discount_factor, prepro, transform)
+        self.state_space = state_space_features
+        self.action_space = action_space
+        self.default_action = default_action
+
+
+class HalfCheetah(ContinuousConfig):
+    def __init__(self):
+        super().__init__(
+            gym_env_string='RoboschoolHalfCheetah-v1',
+            state_space_features=26,
+            state_space_dtype=np.float32,
+            action_space=6)
 
 
 class Pong:

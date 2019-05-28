@@ -72,11 +72,11 @@ from util import timeit, UniImageViewer
 
 
 @timeit
-def rollout_policy(num_episodes, policy, config):
+def rollout_policy(num_episodes, policy, config, redis_host='localhost', redis_port=6379 ):
 
     policy = policy.eval()
     policy = policy.to('cpu')
-    db = Db(host=config.redis_host, port=config.redis_port)
+    db = Db(host=redis_host, port=redis_port)
     rollout = db.create_rollout(config)
     v = UniImageViewer(config.gym_env_string, (200, 160))
     env = gym.make(config.gym_env_string)
@@ -86,11 +86,11 @@ def rollout_policy(num_episodes, policy, config):
         episode = single_episode(env, config, policy, rollout)
 
         # more monitoring
-        config.tb.add_scalar('reward', episode.total_reward(), config.tb_step)
-        config.tb.add_scalar('epi_len', len(episode), config.tb_step)
-        config.tb_step += 1
+        #config.tb.add_scalar('reward', episode.total_reward(), config.tb_step)
+        #config.tb.add_scalar('epi_len', len(episode), config.tb_step)
+        #config.tb_step += 1
 
-    torch.save(policy.state_dict(), config.rundir + f'/latest.wgt')
+    #torch.save(policy.state_dict(), config.rundir + f'/latest.wgt')
 
     rollout.finalize()
     return rollout
