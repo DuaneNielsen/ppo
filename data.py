@@ -442,6 +442,74 @@ class StepCoder:
         return Step(o, action, reward, done)
 
 
+class AdvancedNumpyCoder:
+    def __init__(self, shape, dtype):
+        self.shape = shape
+        self.dtype = dtype
+        self.len = np.ndarray(shape, dtype=dtype).nbytes
+        self.slice = None
+
+    def set_offset(self, offset):
+        """
+        sets the base address offset to read from the bytestring
+        returns the offset of the next field
+        """
+        end = offset + self.len
+        self.slice = slice(offset, end)
+        return end
+
+    def encode(self, observation):
+        return observation.tobytes()
+
+    def decode(self, encoded):
+        ndarray = np.frombuffer(encoded[self.slice], dtype=self.dtype).reshape(self.shape)
+        return ndarray
+
+
+class RewardDoneCoder:
+    def __init__(self):
+        self.format = '>d?'
+        self.slice = None
+
+    def set_offset(self, offset):
+        """
+        sets the base address offset to read from the bytestring
+        returns the offset of the next field
+        """
+        end = offset + struct.calcsize(self.format)
+        self.slice = slice(offset, end)
+        return end
+
+    def encode(self, reward, done):
+        return struct.pack(self.format, reward, done)
+
+    def decode(self, encoded):
+        reward, done = struct.unpack(self.format, encoded[self.slice])
+        return reward, done
+
+
+class AdvancedStepCoder:
+    def __init__(self, state_shape, state_dtype, action_shape, action_dtype):
+        self.reward_done_coder = RewardDoneCoder()
+        end = self.reward_done_coder.set_offset(0)
+        self.state_coder = AdvancedNumpyCoder(shape=state_shape, dtype=state_dtype)
+        end = self.state_coder.set_offset(end)
+        self.action_coder = AdvancedNumpyCoder(shape=action_shape, dtype=action_dtype)
+        end = self.action_coder.set_offset(end)
+
+    def encode(self, step):
+        encoded = self.reward_done_coder.encode(step.reward, step.done)
+        encoded += self.state_coder.encode(step.observation)
+        encoded += self.action_coder.encode(step.action)
+        return encoded
+
+    def decode(self, encoded):
+        reward, done = self.reward_done_coder.decode(encoded)
+        state = self.state_coder.decode(encoded)
+        action = self.action_coder.decode(encoded)
+        return Step(state, action, reward, done)
+
+
 class Step:
     def __init__(self, observation, action, reward, done):
         self.observation = observation

@@ -3,7 +3,7 @@ import numpy as np
 import configs
 import pytest
 from statistics import mean, stdev
-from data import StepCoder, NumpyCoder, RedisSequence
+from data import StepCoder, NumpyCoder, RedisSequence, AdvancedNumpyCoder, AdvancedStepCoder, RewardDoneCoder, Step
 import threading
 import time
 import random
@@ -93,6 +93,70 @@ def test_len_get():
     assert type(bds[0][0]).__name__ == 'Tensor'
 
 
+def test_advanced_numpy():
+    coder1 = data.AdvancedNumpyCoder(shape=(2, 2), dtype=np.float64)
+    end = coder1.set_offset(0)
+    ndarray = np.random.rand(2, 2)
+    encoded = coder1.encode(ndarray)
+    decoded = coder1.decode(encoded)
+    np.testing.assert_array_equal(ndarray, decoded)
+
+    coder2 = data.AdvancedNumpyCoder(shape=(2, 2), dtype=np.float64)
+    end = coder2.set_offset(end)
+    ndarray1 = np.random.rand(2, 2).astype(np.float64)
+    ndarray2 = np.random.rand(2, 2).astype(np.float64)
+    encoded = coder1.encode(ndarray1)
+    encoded += coder2.encode(ndarray2)
+    decoded1 = coder1.decode(encoded)
+    decoded2 = coder2.decode(encoded)
+
+    np.testing.assert_array_equal(ndarray1, decoded1)
+    np.testing.assert_array_equal(ndarray2, decoded2)
+
+
+def test_advanced_numpy_mixed():
+    coder1 = data.AdvancedNumpyCoder(shape=(2, 2), dtype=np.float32)
+    coder2 = data.AdvancedNumpyCoder(shape=(2, 2), dtype=np.float16)
+    end = coder1.set_offset(0)
+    end = coder2.set_offset(end)
+    ndarray1 = np.random.rand(2, 2).astype(np.float32)
+    ndarray2 = np.random.rand(2, 2).astype(np.float16)
+    encoded = coder1.encode(ndarray1)
+    encoded += coder2.encode(ndarray2)
+    decoded1 = coder1.decode(encoded)
+    decoded2 = coder2.decode(encoded)
+
+    np.testing.assert_array_equal(ndarray1, decoded1)
+    np.testing.assert_array_equal(ndarray2, decoded2)
+
+
+def test_advanced_numpy_mixed():
+    coder1 = data.AdvancedNumpyCoder(shape=(2, 2), dtype=np.float32)
+    coder2 = data.AdvancedNumpyCoder(shape=4, dtype=np.float16)
+    end = coder1.set_offset(0)
+    end = coder2.set_offset(end)
+    ndarray1 = np.random.rand(2, 2).astype(np.float32)
+    ndarray2 = np.random.rand(4).astype(np.float16)
+    encoded = coder1.encode(ndarray1)
+    encoded += coder2.encode(ndarray2)
+    decoded1 = coder1.decode(encoded)
+    decoded2 = coder2.decode(encoded)
+
+    np.testing.assert_array_equal(ndarray1, decoded1)
+    np.testing.assert_array_equal(ndarray2, decoded2)
+
+
+def test_reward_done_coder():
+    reward = 1.4
+    done = True
+    coder = RewardDoneCoder()
+    coder.set_offset(0)
+    encoded = coder.encode(reward, done)
+    reward_decoded, done_decoded = coder.decode(encoded)
+    assert reward == reward_decoded
+    assert done == done_decoded
+
+
 def test_encode_numpy():
     coder = data.NumpyCoder(1, np.float64)
     assert coder.header_fmt == '>I'
@@ -123,6 +187,21 @@ def test_encode_decode():
     assert s.reward == decoded.reward
     assert s.done == decoded.done
     np.testing.assert_array_equal(s.observation, decoded.observation)
+
+
+def test_advanced_stepcoder():
+    coder = AdvancedStepCoder(state_shape=(24,), state_dtype=np.float32, action_shape=(6,), action_dtype=np.float32)
+    state = np.random.rand(24).astype(dtype=np.float32)
+    action = np.random.rand(6).astype(dtype=np.float32)
+    reward = 4.5
+    done = True
+    step = Step(state, action, reward, done)
+    encoded = coder.encode(step)
+    step_d = coder.decode(encoded)
+    np.testing.assert_array_equal(step_d.observation, step.observation)
+    np.testing.assert_array_equal(step_d.action, step.action)
+    assert step.reward == step_d.reward
+    assert step.done == step_d.done
 
 
 def testMultiProcessRedisSquence(db):
