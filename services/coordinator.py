@@ -21,6 +21,12 @@ class Coordinator(Server):
         self.db = PolicyDB(db_host=db_host, db_port=db_port, db_name=db_name, db_user=db_user, db_password=db_password)
         self.exp_buffer = Db(host=redis_host, port=redis_port, db=redis_db, password=redis_password)
 
+        self.db_host = db_host
+        self.db_port = db_port
+        self.db_name = db_name
+        self.db_user = db_user
+        self.db_password = db_password
+
         self.handler.register(StartMessage, self.handle_start)
         self.handler.register(StopMessage, self.handle_stop)
         self.handler.register(EpisodeMessage, self.handle_episode)
@@ -30,12 +36,12 @@ class Coordinator(Server):
         self.policy = None
         self.state = STOPPED
         duallog.setup('logs', 'co-ordinator')
-        self.resume()
+        self.resume(self.db)
         self.last_active = time.time()
         self.start_heartbeat(5, self.heartbeat)
 
-    def resume(self):
-        record = self.db.latest_run()
+    def resume(self, db):
+        record = db.latest_run()
         self.state = record.run_state
         self.config = record.config_b
 
@@ -126,4 +132,7 @@ class Coordinator(Server):
     def heartbeat(self):
         if self.state == GATHERING or self.state == TRAINING:
             if self.last_active > self.config.timeout:
-                self.resume()
+                # database connection must be formed inside the thread
+                db = PolicyDB(db_host=self.db_host, db_port=self.db_port, db_name=self.db_name,
+                              db_user=self.db_user, db_password=self.db_password)
+                self.resume(db)
