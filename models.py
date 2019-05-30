@@ -1,6 +1,7 @@
 import torch
 from torch import nn
 from torch.nn import functional as NN
+import copy
 
 
 class MultiPolicyNet(nn.Module):
@@ -29,6 +30,51 @@ class MultiPolicyNet(nn.Module):
         index = torch.argmax(probs, dim=1)
         gym_action = self.action_map[index]
         return gym_action
+
+
+class MultiPolicyNetContinuous(nn.Module):
+    def __init__(self, features, actions, hidden=200, scale=1.0):
+        super().__init__()
+        self.features = features
+        self.actions = actions
+        self.scale = scale
+
+        self.l1 = nn.Linear(features, hidden)
+        self.l2 = nn.Linear(hidden, actions * 2)
+
+    def forward(self, observation):
+        hidden = torch.selu(self.l1(observation))
+        action = self.l2(hidden)
+        mu, sigma = torch.split(action, self.actions, dim=1)
+        mu = torch.tanh(mu)
+        sigma = torch.sigmoid(sigma) * self.scale
+        return mu, sigma
+
+    def sample(self, mu, sigma):
+        return torch.distributions.Normal(mu, sigma).sample()
+
+    def max_action(self, mu, sigma):
+        return mu
+
+
+class PPOWrapModel(nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.old = copy.deepcopy(model)
+        self.new = model
+        self.features = model.features
+
+    def forward(self, input, old=False):
+        if old:
+            return self.old(input)
+        else:
+            return self.new(input)
+
+    def sample(self, *args):
+        return self.new.sample(*args)
+
+    def backup(self):
+        self.old.load_state_dict(self.new.state_dict())
 
 
 class PPOWrap(nn.Module):

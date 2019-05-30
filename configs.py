@@ -6,7 +6,7 @@ import torch
 from torchvision.transforms.functional import to_tensor
 import gym
 import data
-from data import SingleProcessDataSet, StepCoder, NumpyCoder
+from data import SingleProcessDataSet, StepCoder, NumpyCoder, AdvancedStepCoder
 
 
 class DefaultPrePro:
@@ -25,6 +25,11 @@ class DefaultTransform:
             return torch.from_numpy(observation).float().unsqueeze(0)
         else:
             return torch.from_numpy(observation).float()
+
+
+class ActionTransform:
+    def __call__(self, action):
+        return action.numpy()
 
 
 class ModelConfig:
@@ -50,6 +55,14 @@ class MultiPolicyNet(ModelConfig):
         self.output_size = output_size
 
 
+class MultiPolicyNetContinuous(ModelConfig):
+    def __init__(self, feature_size, hidden_size, action_size):
+        super().__init__('MultiPolicyNet')
+        self.features_size = feature_size
+        self.hidden_size = hidden_size
+        self.action_size = action_size
+
+
 class GymEnvConfig(EnvConfig):
     def __init__(self, name):
         super().__init__(name)
@@ -71,16 +84,23 @@ class BaseConfig:
         self.model_string = 'MultiPolicyNet'
         self.step_coder = step_coder
         self.discount_factor = discount_factor
-        self.max_rollout_len = 3000
+        self.max_rollout_len = 3000  #terminate episodes that go longer than this
         self.prepro = prepro
         self.transform = transform
 
-        self.episodes_per_gatherer = 1
+        self.continuous = False
+
+        # gathering
+        self.episode_batch_size = 1  # the number of steps to buffer in the gatherer before updating
+        self.episodes_per_gatherer = 1 # number of episodes to gather before waiting for co-ordinator
         self.num_steps_per_rollout = 1000
         self.policy_reservoir_depth = 10
         self.policy_top_depth = 10
         self.run_id = ''
         self.timeout = 40
+
+        # training
+        self.max_minibatch_size = 10000
 
         self.gpu_profile = False
         self.gpu_profile_fn = f'{datetime.datetime.now():%d-%b-%y-%H-%M-%S}-gpu_mem_prof.txt'
@@ -110,17 +130,22 @@ class ContinuousConfig(BaseConfig):
                  gym_env_string,
                  state_space_features,
                  state_space_dtype,
-                 action_space,
+                 action_space_features,
+                 action_space_dtype,
                  default_action=0.0,
                  discount_factor=0.99,
                  prepro=DefaultPrePro(),
                  transform=DefaultTransform(),
                  ):
-        step_coder = NumpyCoder(state_space_features, state_space_dtype)
-        super().__init__(gym_env_string, step_coder, discount_factor, prepro, transform)
-        self.state_space = state_space_features
-        self.action_space = action_space
-        self.default_action = default_action
+        super().__init__(gym_env_string, None, discount_factor, prepro, transform)
+        self.state_space_features = state_space_features
+        self.state_space_dtype = state_space_dtype
+        self.action_space_features = action_space_features
+        self.action_space_dtype = action_space_dtype
+        self.continuous = True
+        self.action_transform = ActionTransform()
+        self.step_coder = AdvancedStepCoder(state_shape=self.state_space_features, state_dtype=self.state_space_dtype,
+                                            action_shape=self.action_space_features, action_dtype=self.action_space_dtype)
 
 
 class HalfCheetah(ContinuousConfig):
@@ -129,7 +154,14 @@ class HalfCheetah(ContinuousConfig):
             gym_env_string='RoboschoolHalfCheetah-v1',
             state_space_features=26,
             state_space_dtype=np.float32,
-            action_space=6)
+            action_space_features=6,
+            action_space_dtype=np.float32
+        )
+        self.model = MultiPolicyNetContinuous(
+            feature_size=self.state_space_features,
+            hidden_size=26 * 2,
+            action_size=self.action_space_features
+        )
 
 
 class Pong:

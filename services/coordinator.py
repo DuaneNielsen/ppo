@@ -4,7 +4,7 @@ from services.server import Server
 from data import Db
 from messages import StartMessage, StopMessage, EpisodeMessage, TrainCompleteMessage, ConfigUpdateMessage, \
     RolloutMessage, ResetMessage, TrainMessage
-from models import PPOWrap
+from models import PPOWrap, PPOWrapModel, MultiPolicyNetContinuous
 from policy_db import PolicyDB, PolicyStore
 import time
 
@@ -41,17 +41,28 @@ class Coordinator(Server):
 
         self.exp_buffer.clear_rollouts()
         rollout = self.exp_buffer.create_rollout(self.config)
-        self.policy = PPOWrap(self.config.features, self.config.action_map, self.config.hidden)
+        self.policy = self.init_policy(self.config)
         self.policy.load_state_dict(record.policy)
 
         if self.state != STOPPED:
             self.state = GATHERING
             RolloutMessage(self.id, rollout.id, self.policy, self.config, self.config.episodes_per_gatherer).send(self.r)
 
+    def init_policy(self, config):
+        if hasattr(config, 'continuous') and config.continuous:
+            model = MultiPolicyNetContinuous(config.model.features_size, config.model.action_size,
+                                             config.model.hidden_size)
+            policy = PPOWrapModel(model)
+        else:
+            policy = PPOWrap(config.features, config.action_map, config.hidden)
+
+        return policy
+
     def handle_start(self, msg):
         self.state = GATHERING
         self.config = msg.config
-        self.policy = PPOWrap(self.config.features, self.config.action_map, self.config.hidden)
+
+        self.policy = self.init_policy(self.config)
 
         ResetMessage(self.id).send(self.r)
 
@@ -104,7 +115,8 @@ class Coordinator(Server):
 
         self.exp_buffer.clear_rollouts()
         rollout = self.exp_buffer.create_rollout(self.config)
-        self.policy = PPOWrap(self.config.features, self.config.action_map, self.config.hidden)
+
+        self.policy = self.init_policy(self.config)
         self.policy.load_state_dict(record.policy)
 
         self.state = GATHERING

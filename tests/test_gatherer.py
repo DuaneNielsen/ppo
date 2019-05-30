@@ -5,8 +5,8 @@ import redis
 from messages import *
 from threading import Thread
 from data import Db
-from configs import LunarLander
-from models import PPOWrap
+from configs import LunarLander, HalfCheetah
+from models import PPOWrap, PPOWrapModel, MultiPolicyNetContinuous
 from time import sleep
 
 
@@ -54,6 +54,28 @@ def test_gatherer_processing(r):
 
     config = LunarLander()
     policy_net = PPOWrap(config.features, config.action_map, config.hidden)
+    db = Db(redis_client=r)
+    rollout = db.create_rollout(config)
+
+    RolloutMessage(s.id, rollout.id, policy_net, config, 10).send(r)
+
+    sleep(5)
+
+    assert len(rollout) >= config.num_steps_per_rollout
+    db.delete_rollout(rollout)
+    ExitMessage(s.id).send(r)
+
+
+def test_gatherer_processing_continuous(r):
+    s = Gatherer()
+    ServerThread(s).start()
+
+    tst = TestServer(r)
+    ServerThread(tst).start()
+
+    config = HalfCheetah()
+    model = MultiPolicyNetContinuous(config.model.features_size, config.model.action_size, config.model.hidden_size)
+    policy_net = PPOWrapModel(model)
     db = Db(redis_client=r)
     rollout = db.create_rollout(config)
 

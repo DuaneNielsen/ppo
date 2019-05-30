@@ -1,4 +1,5 @@
 import gym
+import roboschool
 import torch
 
 from data import Db, Step
@@ -71,31 +72,6 @@ from util import timeit, UniImageViewer
 
 
 
-@timeit
-def rollout_policy(num_episodes, policy, config, redis_host='localhost', redis_port=6379 ):
-
-    policy = policy.eval()
-    policy = policy.to('cpu')
-    db = Db(host=redis_host, port=redis_port)
-    rollout = db.create_rollout(config)
-    v = UniImageViewer(config.gym_env_string, (200, 160))
-    env = gym.make(config.gym_env_string)
-
-    for i in range(num_episodes):
-
-        episode = single_episode(env, config, policy, rollout)
-
-        # more monitoring
-        #config.tb.add_scalar('reward', episode.total_reward(), config.tb_step)
-        #config.tb.add_scalar('epi_len', len(episode), config.tb_step)
-        #config.tb_step += 1
-
-    #torch.save(policy.state_dict(), config.rundir + f'/latest.wgt')
-
-    rollout.finalize()
-    return rollout
-
-
 def single_episode(env, config, policy, rollout=None, v=None, render=False, display_observation=False):
 
     """
@@ -134,6 +110,60 @@ def single_episode(env, config, policy, rollout=None, v=None, render=False, disp
 
         if episode is not None:
             episode.append(Step(observation, index, reward, done), config.episode_batch_size)
+
+        # compute the observation that resulted from our action
+        observation = config.prepro(observation_t1, observation_t0)
+        observation_t0 = observation_t1
+
+        if render:
+            env.render(mode='human')
+        if display_observation:
+            v.render(observation)
+
+    if episode is not None:
+        episode.end()
+    return episode
+
+
+def single_episode_continous(env, config, policy, rollout=None, v=None, render=False, display_observation=False):
+
+    """
+
+    :param config: The General configuration
+    :param env: The simulator, reset will be called at the start of each episode
+    :param config: the simulator configuration
+    :param policy: the policy to run
+    :param rollout: the rollout data structure to capture experience into
+    :param v: an object with a render method for displaying images
+    :param render: if True, env.render will be called for each step
+    :param display_observation: if true, v.render(observation) will be called for each step
+    :return:
+    """
+
+    episode = None
+    if rollout is not None:
+        episode = rollout.create_episode()
+    episode_length = 0
+    observation_t0 = env.reset()
+    action = config.action_transform(torch.zeros(config.model.action_size))
+    observation_t1, reward, done, info = env.step(action)
+    observation = config.prepro(observation_t1, observation_t0)
+    observation_t0 = observation_t1
+
+    done = False
+    while not done:
+        # take an action on current observation and record result
+        observation_tensor = config.transform(observation, insert_batch=True)
+        mu, sigma = policy(observation_tensor)
+        action = policy.sample(mu, sigma)
+        action = config.action_transform(action.squeeze())
+
+        observation_t1, reward, done, info = env.step(action)
+
+        done = done or episode_length > config.max_rollout_len
+
+        if episode is not None:
+            episode.append(Step(observation, action, reward, done), config.episode_batch_size)
 
         # compute the observation that resulted from our action
         observation = config.prepro(observation_t1, observation_t0)

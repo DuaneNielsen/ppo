@@ -4,7 +4,7 @@ import duallog
 from services.server import Server
 from data import Db, RolloutDatasetBase
 from messages import TrainMessage, TrainCompleteMessage
-from ppo_clip_discrete import train_policy
+from ppo_clip_discrete import train_policy, train_ppo_continuous
 
 
 class Trainer(Server):
@@ -21,7 +21,10 @@ class Trainer(Server):
         policy = msg.policy
 
         logging.info('started training')
-        train_policy(policy, dataset, msg.config)
+        if msg.config.continuous:
+            train_ppo_continuous(policy, dataset, msg.config)
+        else:
+            train_policy(policy, dataset, msg.config)
         logging.info('training finished')
 
         logging.info('training complete')

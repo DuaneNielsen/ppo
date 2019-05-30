@@ -6,7 +6,7 @@ import duallog
 from services.server import Server
 from data import Db
 from messages import RolloutMessage, EpisodeMessage
-from rollout import single_episode
+from rollout import single_episode, single_episode_continous
 
 
 class Gatherer(Server):
@@ -29,7 +29,10 @@ class Gatherer(Server):
 
         while len(rollout) < msg.config.num_steps_per_rollout:
             logging.info(f'starting episode {episode_number} of {msg.config.gym_env_string}')
-            episode = single_episode(env, msg.config, policy, rollout)
+            if msg.config.continuous:
+                episode = single_episode_continous(env, msg.config, policy, rollout)
+            else:
+                episode = single_episode(env, msg.config, policy, rollout)
             EpisodeMessage(self.id, episode_number, len(episode), episode.total_reward(),
                            msg.config.num_steps_per_rollout).send(self.redis)
             episode_number += 1

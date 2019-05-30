@@ -17,6 +17,7 @@ class PickleField(BlobField):
     def python_value(self, value):
         return pickle.loads(value)
 
+import numpy as np
 
 class ConfigField(JSONField):
     field_type = 'json'
@@ -25,18 +26,23 @@ class ConfigField(JSONField):
 
         if isinstance(value, dict):
             attribs = copy.copy(value)
+            guide = copy.copy(value)
         else:
             attribs = copy.copy(vars(value))
+            guide = copy.copy(vars(value))
 
-        # attributes excluded from JSON
+        for name, item in guide.items():
+            if callable(item) or isinstance(item, type):
+                del attribs[name]
+
         if 'step_coder' in attribs:
             del attribs['step_coder']
-        if 'prepro' in attribs:
-            del attribs['prepro']
-        if 'transform' in attribs:
-            del attribs['transform']
 
-        return json.dumps(attribs)
+        if 'model' in attribs:
+            del attribs['model']
+
+        encoded = json.dumps(attribs)
+        return encoded
 
     def python_value(self, value):
         return value

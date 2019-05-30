@@ -313,7 +313,8 @@ if __name__ == '__main__':
         'CartPole-v0': configs.CartPole(),
         'LunarLander-v2': configs.LunarLander(),
         'Acrobot-v1': configs.Acrobot(),
-        'MountainCar-v0': configs.MountainCar()
+        'MountainCar-v0': configs.MountainCar(),
+        configs.HalfCheetah().gym_env_string: configs.HalfCheetah()
     }
 
     r = Redis(host=args.redis_host, port=args.redis_port, password=args.redis_password)
