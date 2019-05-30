@@ -128,10 +128,10 @@ def train_ppo_continuous(policy, dataset, config, device='cpu'):
             #     print(f'ACT__ {action[0].data}')
 
             mu, sigma = policy(format_observation(observation, policy.features))
-            new_prob = torch.distributions.Normal(mu, sigma).log_prob(action).clamp(1.0)
+            new_prob = torch.distributions.Normal(mu, sigma).log_prob(action).clamp(max=0.0)
             new_prob.retain_grad()
             old_mu, old_sigma = policy(format_observation(observation, policy.features), old=True)
-            old_prob = torch.distributions.Normal(old_mu, old_sigma).log_prob(action).clamp(1.0)
+            old_prob = torch.distributions.Normal(old_mu, old_sigma).log_prob(action).clamp(max=0.0)
             policy.backup()
 
             loss = ppo_loss_log(new_prob, old_prob, advantage, clip=0.2)
