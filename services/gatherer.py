@@ -22,12 +22,14 @@ class Gatherer(Server):
 
     def rollout(self, msg):
 
+        logging.debug(f'gathering for rollout: {msg.rollout_id}')
+
         policy = msg.policy.to('cpu').eval()
         env = gym.make(msg.config.gym_env_string)
         rollout = self.exp_buffer.rollout(msg.rollout_id, msg.config)
         episode_number = 0
 
-        while len(rollout) < msg.config.num_steps_per_rollout:
+        while self.exp_buffer.rollout_seq.current() == msg.rollout_id and len(rollout) < msg.config.num_steps_per_rollout:
             logging.info(f'starting episode {episode_number} of {msg.config.gym_env_string}')
             if msg.config.continuous:
                 episode = single_episode_continous(env, msg.config, policy, rollout)
