@@ -2,6 +2,7 @@ import torch
 from torch import nn
 from torch.nn import functional as NN
 import copy
+import logging
 
 
 class MultiPolicyNet(nn.Module):
@@ -32,22 +33,32 @@ class MultiPolicyNet(nn.Module):
         return gym_action
 
 
+class ExplodedGradient(Exception):
+    pass
+
+
 class MultiPolicyNetContinuous(nn.Module):
-    def __init__(self, features, actions, hidden=200, scale=1.0):
+    def __init__(self, features, actions, hidden=200, scale=1.0, min_sigma=1e-3):
         super().__init__()
         self.features = features
         self.actions = actions
         self.scale = scale
+        self.min_sigma = min_sigma
 
         self.l1 = nn.Linear(features, hidden)
         self.l2 = nn.Linear(hidden, actions * 2)
 
     def forward(self, observation):
-        hidden = torch.selu(self.l1(observation))
+        inter = self.l1(observation)
+        hidden = torch.selu(inter)
+        if torch.isnan(hidden).any():
+            raise ExplodedGradient
         action = self.l2(hidden)
+        if torch.isnan(action).any():
+            raise ExplodedGradient
         mu, sigma = torch.split(action, self.actions, dim=1)
         mu = torch.tanh(mu)
-        sigma = torch.sigmoid(sigma) * self.scale
+        sigma = (torch.sigmoid(sigma) * self.scale) + self.min_sigma
         return mu, sigma
 
     def sample(self, mu, sigma):
@@ -56,6 +67,34 @@ class MultiPolicyNetContinuous(nn.Module):
     def max_action(self, mu, sigma):
         return mu
 
+
+class MultiPolicyNetContinuousV2(nn.Module):
+    def __init__(self, features, actions, hidden=200, scale=1.0, min_sigma=1e-3):
+        super().__init__()
+        self.features = features
+        self.actions = actions
+        self.scale = scale
+        self.min_sigma = min_sigma
+
+        self.l1_mu = nn.Linear(features, hidden)
+        self.l2_mu = nn.Linear(hidden, actions)
+
+        self.l1_sigma = nn.Linear(features, hidden)
+        self.l2_sigma = nn.Linear(hidden, actions)
+
+    def forward(self, observation):
+        hidden_mu = torch.selu(self.l1_mu(observation))
+        mu = torch.tanh(self.l2_mu(hidden_mu))
+
+        hidden_sigma = torch.selu(self.l1_sigma(observation))
+        sigma = (torch.sigmoid(self.l2_sigma(hidden_sigma)) * self.scale) + self.min_sigma
+        return mu, sigma
+
+    def sample(self, mu, sigma):
+        return torch.distributions.Normal(mu, sigma).sample()
+
+    def max_action(self, mu, sigma):
+        return mu
 
 class PPOWrapModel(nn.Module):
     def __init__(self, model):

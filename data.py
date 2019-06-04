@@ -222,13 +222,13 @@ class RedisRollout:
 
         lockname = self.key('lock')
         lk = Lock(self.redis, lockname)
-        logging.debug(f'getting lock {lockname}')
+        #logging.debug(f'getting lock {lockname}')
         lk.acquire()
-        logging.debug(f'getting lock {lockname}')
+        #logging.debug(f'getting lock {lockname}')
         self.redis.set(self.key('finalized'), 'FINALIZED')
         if lk.owned():
             lk.release()
-            logging.debug(f'released lock {lockname}')
+            #logging.debug(f'released lock {lockname}')
 
         self.episodes = []
         self.episode_len = []
@@ -357,9 +357,9 @@ class Episode:
 
         lockname = self.rollout.key('lock')
         lk = Lock(self.redis, lockname)
-        logging.debug(f'getting lock {lockname}')
+        #logging.debug(f'getting lock {lockname}')
         lk.acquire()
-        logging.debug(f'got lock {lockname}')
+        #logging.debug(f'got lock {lockname}')
 
         if not self.redis.exists(self.rollout.key('finalized')):
             self.redis.lpush(self.rollout.key('episodes'), self.id)
@@ -367,7 +367,7 @@ class Episode:
 
         if lk.owned():
             lk.release()
-            logging.debug(f'released lock {lockname}')
+            #logging.debug(f'released lock {lockname}')
 
     def total_reward(self):
         try:

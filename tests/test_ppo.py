@@ -7,6 +7,11 @@ import roboschool
 from util import UniImageViewer, timeit
 from rollout import single_episode, single_episode_continous
 from data import Db
+from statistics import mean
+
+import logging
+logger = logging.getLogger(__name__)
+logging.basicConfig(format='%(levelname)s-%(module)s-%(message)s', level=logging.INFO)
 
 
 @timeit
@@ -18,6 +23,7 @@ def rollout_policy(num_episodes, policy, config, capsys=None, redis_host='localh
     rollout = db.create_rollout(config)
     v = UniImageViewer(config.gym_env_string, (200, 160))
     env = gym.make(config.gym_env_string)
+    rewards = []
 
     for i in range(num_episodes):
 
@@ -26,15 +32,10 @@ def rollout_policy(num_episodes, policy, config, capsys=None, redis_host='localh
         else:
             episode = single_episode(env, config, policy, rollout)
 
-        if capsys:
-            with capsys.disabled():
-                print(episode.total_reward())
-        #config.tb.add_scalar('epi_len', len(episode), config.tb_step)
-        #config.tb_step += 1
-
-    #torch.save(policy.state_dict(), config.rundir + f'/latest.wgt')
+        rewards.append(episode.total_reward())
 
     rollout.finalize()
+    logger.info(f'ave reward {mean(rewards)}')
     return rollout
 
 
@@ -57,7 +58,7 @@ def test_ppo_clip_continuous(capsys):
     model = MultiPolicyNetContinuous(config.model.features_size, config.model.action_size, config.model.hidden_size)
     policy_net = PPOWrapModel(model)
 
-    for epoch in range(3):
+    for epoch in range(30):
 
         rollout = rollout_policy(10, policy_net, config, capsys)
         dataset = RolloutDatasetBase(config, rollout)

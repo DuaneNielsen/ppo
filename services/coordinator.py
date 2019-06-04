@@ -4,15 +4,16 @@ from services.server import Server
 from data import Db
 from messages import StartMessage, StopMessage, EpisodeMessage, TrainCompleteMessage, ConfigUpdateMessage, \
     RolloutMessage, ResetMessage, TrainMessage
-from models import PPOWrap, PPOWrapModel, MultiPolicyNetContinuous
+from models import *
 from policy_db import PolicyDB, PolicyStore
 import time
-
 
 GATHERING = 'GATHERING'
 STOPPED = 'STOPPED'
 TRAINING = 'TRAINING'
 
+class ModelNotFoundException(Exception):
+    pass
 
 class Coordinator(Server):
     def __init__(self, redis_host='localhost', redis_port=6379, redis_db=0, redis_password=None,
@@ -52,12 +53,20 @@ class Coordinator(Server):
 
         if self.state != STOPPED:
             self.state = GATHERING
-            RolloutMessage(self.id, rollout.id, self.policy, self.config, self.config.episodes_per_gatherer).send(self.r)
+            RolloutMessage(self.id, rollout.id, self.policy, self.config, self.config.episodes_per_gatherer).send(
+                self.r)
 
     def init_policy(self, config):
         if hasattr(config, 'continuous') and config.continuous:
-            model = MultiPolicyNetContinuous(config.model.features_size, config.model.action_size,
-                                             config.model.hidden_size)
+            if config.model.name == 'MultiPolicyNet':
+                model = MultiPolicyNetContinuous(config.model.features_size, config.model.action_size,
+                                                 config.model.hidden_size)
+            elif config.model.name == 'MultiPolicyNetContinuousV2':
+                model = MultiPolicyNetContinuousV2(config.model.features_size, config.model.action_size,
+                                                   config.model.hidden_size)
+            else:
+                raise ModelNotFoundException
+
             policy = PPOWrapModel(model)
         else:
             policy = PPOWrap(config.features, config.action_map, config.hidden)
@@ -81,8 +90,8 @@ class Coordinator(Server):
         if not self.state == STOPPED:
             rollout = self.exp_buffer.latest_rollout(self.config)
             steps = len(rollout)
-            logging.debug(int(steps))
             if steps >= self.config.num_steps_per_rollout and not self.state == TRAINING:
+                logging.debug(f'Starting training with {steps} steps')
                 rollout.finalize()
                 self.state = TRAINING
                 total_reward = 0
@@ -98,6 +107,8 @@ class Coordinator(Server):
         self.last_active = time.time()
 
     def handle_train_complete(self, msg):
+        logging.debug('Training completed')
+
         self.policy = msg.policy
         ResetMessage(self.id).send(self.r)
 
@@ -110,10 +121,12 @@ class Coordinator(Server):
         self.last_active = time.time()
 
     def handle_stop(self, msg):
+        logging.debug('Got STOP message')
         self.state = STOPPED
         self.db.set_state_latest(STOPPED)
 
     def handle_config_update(self, msg):
+        logging.debug(f'Got config update')
 
         run = self.db.latest_run()
         record = self.db.best(run.run).get()
@@ -130,9 +143,13 @@ class Coordinator(Server):
         RolloutMessage(self.id, rollout.id, self.policy, self.config, self.config.episodes_per_gatherer).send(self.r)
 
     def heartbeat(self):
+        time_inactive = time.time() - self.last_active
+        logging.debug(
+            f'Heartbeat state : {self.state},  time_inactive: {time_inactive}, timeout: {self.config.timeout}')
         if self.state == GATHERING or self.state == TRAINING:
-            if self.last_active > self.config.timeout:
+            if time_inactive > self.config.timeout:
                 # database connection must be formed inside the thread
                 db = PolicyDB(db_host=self.db_host, db_port=self.db_port, db_name=self.db_name,
                               db_user=self.db_user, db_password=self.db_password)
+                logging.debug(f'Heartbeat: inactive for {time_inactive} => resuming')
                 self.resume(db)

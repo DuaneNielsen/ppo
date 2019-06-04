@@ -364,7 +364,6 @@ class MessageHandler:
     def listen(self):
         """Blocking call for main loop"""
         for message in self.p.listen():
-            logging.debug(message)
             self.handle(message)
 
     def checkMessage(self):

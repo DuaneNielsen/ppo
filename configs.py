@@ -7,7 +7,8 @@ from torchvision.transforms.functional import to_tensor
 import gym
 import data
 from data import SingleProcessDataSet, StepCoder, NumpyCoder, AdvancedStepCoder
-
+import logging
+import models
 
 class DefaultPrePro:
     def __call__(self, observation_t1, observation_t0):
@@ -27,14 +28,23 @@ class DefaultTransform:
             return torch.from_numpy(observation).float()
 
 
+class InfinityException(Exception):
+    pass
+
+
 class ActionTransform:
     def __call__(self, action):
+        if torch.isnan(action).any().item() == 1:
+            raise InfinityException
         return action.numpy()
 
 
 class ModelConfig:
     def __init__(self, name):
         self.name = name
+
+    def get_model(self):
+        return None
 
 
 class AlgoConfig:
@@ -61,6 +71,20 @@ class MultiPolicyNetContinuous(ModelConfig):
         self.features_size = feature_size
         self.hidden_size = hidden_size
         self.action_size = action_size
+
+    def get_model(self):
+        return models.MultiPolicyNetContinuous(self.features_size, self.action_size, self.hidden_size)
+
+
+class MultiPolicyNetContinuousV2(ModelConfig):
+    def __init__(self, feature_size, hidden_size, action_size):
+        super().__init__('MultiPolicyNetContinuousV2')
+        self.features_size = feature_size
+        self.hidden_size = hidden_size
+        self.action_size = action_size
+
+    def get_model(self):
+        return models.MultiPolicyNetContinuousV2(self.features_size, self.action_size, self.hidden_size)
 
 
 class GymEnvConfig(EnvConfig):
@@ -93,7 +117,7 @@ class BaseConfig:
         # gathering
         self.episode_batch_size = 1  # the number of steps to buffer in the gatherer before updating
         self.episodes_per_gatherer = 1 # number of episodes to gather before waiting for co-ordinator
-        self.num_steps_per_rollout = 1000
+        self.num_steps_per_rollout = 2000
         self.policy_reservoir_depth = 10
         self.policy_top_depth = 10
         self.run_id = ''
@@ -101,6 +125,10 @@ class BaseConfig:
 
         # training
         self.max_minibatch_size = 10000
+        self.optimizer = 'SGD'
+        self.lr = 0.05
+        self.ppo_steps_per_batch = 10
+        self.entropy_bonus = 0.0
 
         self.gpu_profile = False
         self.gpu_profile_fn = f'{datetime.datetime.now():%d-%b-%y-%H-%M-%S}-gpu_mem_prof.txt'
@@ -157,9 +185,25 @@ class HalfCheetah(ContinuousConfig):
             action_space_features=6,
             action_space_dtype=np.float32
         )
-        self.model = MultiPolicyNetContinuous(
+        self.model = MultiPolicyNetContinuousV2(
             feature_size=self.state_space_features,
-            hidden_size=26 * 2,
+            hidden_size=26,
+            action_size=self.action_space_features
+        )
+
+
+class Hopper(ContinuousConfig):
+    def __init__(self):
+        super().__init__(
+            gym_env_string='RoboschoolHopper-v1',
+            state_space_features=15,
+            state_space_dtype=np.float32,
+            action_space_features=3,
+            action_space_dtype=np.float32
+        )
+        self.model = MultiPolicyNetContinuousV2(
+            feature_size=self.state_space_features,
+            hidden_size=self.state_space_features,
             action_size=self.action_space_features
         )
 

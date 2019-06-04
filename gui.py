@@ -2,13 +2,13 @@ import PySimpleGUI as sg
 from messages import *
 from redis import Redis
 import configs
-from models import PPOWrap
+from models import PPOWrap, PPOWrapModel, MultiPolicyNetContinuous
 import uuid
 from datetime import datetime
 from data import Db
 import random
 import multiprocessing
-from rollout import single_episode
+from rollout import single_episode, single_episode_continous
 from policy_db import PolicyDB
 import gym
 import time
@@ -24,6 +24,10 @@ import duallog
 duallog.setup('logs', 'gui')
 
 rollout_time = None
+
+# todo fix status bar performance
+# todo type inference of config
+# todo add widget for number of demos
 
 
 class MicroServiceBuffer:
@@ -185,14 +189,21 @@ def stop():
     StopMessage(gui_uuid).send(r)
 
 
-def demo(run=None):
+def demo(run=None, best=False, num_episodes=20):
     if run is None:
         run = policy_db.latest_run()
-    record = policy_db.best(run.run).get()
+    if best:
+        record = policy_db.best(run.run).get()
+    else:
+        record = policy_db.get_latest(run.run)
     env = gym.make(record.config_b.gym_env_string)
-    policy_net = PPOWrap(record.config_b.features, record.config_b.action_map, record.config_b.hidden)
+    if config.continuous:
+        model = config.model.get_model()
+        policy_net = PPOWrapModel(model)
+    else:
+        policy_net = PPOWrap(record.config_b.features, record.config_b.action_map, record.config_b.hidden)
     policy_net.load_state_dict(record.policy)
-    demo = DemoThread(policy_net, record.config_b, env)
+    demo = DemoThread(policy_net, record.config_b, env, num_episodes=num_episodes)
     demo.start()
 
 
@@ -207,16 +218,22 @@ class DemoThread(multiprocessing.Process):
     def run(self):
         for episode_number in range(self.num_episodes):
             logging.info(f'starting episode {episode_number} of {self.env_config.gym_env_string}')
-            single_episode(self.env, self.env_config, self.policy, render=True)
+            if config.continuous:
+                single_episode_continous(self.env, self.env_config, self.policy, render=True)
+            else:
+                single_episode(self.env, self.env_config, self.policy, render=True)
 
         self.env.close()
         logging.debug('exiting')
 
 
 def update_config(value):
-    # todo need to read a config into UI first, then send the updated one
     config.num_steps_per_rollout = int(value['num_steps_per_rollout'])
-    ConfigUpdateMessage(gui_uuid, config).send(r)
+    config.optimizer = value['optimizer']
+    config.lr = float(value['lr'])
+    config.ppo_steps_per_batch = int(value['ppo_steps_per_batch'])
+    config.entropy_bonus = float(value['entropy_bonus'])
+
 
 
 def filter_run(value):
@@ -314,7 +331,8 @@ if __name__ == '__main__':
         'LunarLander-v2': configs.LunarLander(),
         'Acrobot-v1': configs.Acrobot(),
         'MountainCar-v0': configs.MountainCar(),
-        configs.HalfCheetah().gym_env_string: configs.HalfCheetah()
+        configs.HalfCheetah().gym_env_string: configs.HalfCheetah(),
+        configs.Hopper().gym_env_string: configs.Hopper()
     }
 
     r = Redis(host=args.redis_host, port=args.redis_port, password=args.redis_password)
@@ -373,13 +391,18 @@ if __name__ == '__main__':
 
 
     def config_element(field_name):
+        try:
+            value=str(config.__dict__[field_name])
+        except KeyError:
+            value = "N/A"
+
         return [sg.Text(field_name, size=(20, 1)),
-                sg.In(default_text=str(config.__dict__[field_name]), size=(25, 1),
-                      key=field_name)]
+                sg.In(value, size=(30, 1), key=field_name)]
 
 
     config_panel_names = ['run_id', 'gym_env_string', 'num_steps_per_rollout', 'model_string', 'training_algo',
-                          'discount_factor', 'episodes_per_gatherer', 'max_rollout_len', 'policy_reservoir_depth']
+                          'discount_factor', 'episodes_per_gatherer', 'max_rollout_len', 'policy_reservoir_depth',
+                          'optimizer', 'lr', 'ppo_steps_per_batch', 'entropy_bonus']
 
     config_panel_elements = []
     for name in config_panel_names:
@@ -412,7 +435,7 @@ if __name__ == '__main__':
         [sg.Button('LoadConfig'),
          sg.Button('Refresh'),
          sg.Button('DemoBest'),
-         sg.Button('DemoProgress'),
+         sg.Button('DemoLatest'),
          sg.Button('Delete')
          ]
     ]
@@ -453,6 +476,7 @@ if __name__ == '__main__':
         if event != '__TIMEOUT__':
             print(event)
         if event == 'Start':
+            update_config(value)
             start(config)
         elif event == 'Stop':
             stop()
@@ -460,6 +484,7 @@ if __name__ == '__main__':
             demo()
         elif event == 'UpdateConfig':
             update_config(value)
+            ConfigUpdateMessage(gui_uuid, config).send(r)
         elif event == 'FilterRun':
             filter_run(value)
         elif event == 'LoadConfig':
@@ -473,6 +498,11 @@ if __name__ == '__main__':
         elif event == 'Refresh':
             filter_run(value)
         elif event == 'DemoBest':
+            selected = selected_runs(value)
+            if len(selected) == 1:
+                demo(selected[0], best=True)
+
+        elif event == 'DemoLatest':
             selected = selected_runs(value)
             if len(selected) == 1:
                 demo(selected[0])

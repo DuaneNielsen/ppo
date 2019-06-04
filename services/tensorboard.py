@@ -5,12 +5,15 @@ import shutil
 import struct
 from copy import copy
 from pathlib import Path
-
+import duallog
 import tensorboardX
 
 from services.server import Server
 from messages import EpisodeMessage, StartMessage
 from policy_db import PolicyDB
+import redis
+
+logging.getLogger('peewee').setLevel(logging.INFO)
 
 
 class TensorBoardCleaner(multiprocessing.Process):
@@ -26,7 +29,6 @@ class TensorBoardCleaner(multiprocessing.Process):
         self.schedule.run()
 
     def clean(self):
-        logging.debug('cleaning')
         runs = self.db.runs()
         files = list(Path('runs').glob('*/events*.*'))
         rundirs = {}
@@ -51,6 +53,18 @@ class TensorBoardCleaner(multiprocessing.Process):
                 logging.error(f"OS didn't let us delete {str(file.parent)}")
 
         self.schedule.enter(self.clean_frequency_seconds, 0, self.clean)
+
+
+class RedisStep:
+    def __init__(self, run, redis):
+        self.redis = redis
+
+        self.key = run + '_step'
+        if self.redis.get(self.key) is None:
+            self.redis.set(run + '_step', 0)
+
+    def increment(self):
+        return self.redis.incr(self.key)
 
 
 class TensorBoardStepWriter:
@@ -93,12 +107,24 @@ class TensorBoardStepWriter:
         self.f.close()
 
 
+class DumbStep:
+    def __init__(self):
+        self.step = 0
+
+    def increment(self):
+        this_step = self.step
+        self.step += 1
+        return this_step
+
+
 class TensorBoardListener(Server):
     def __init__(self, redis_host, redis_port, redis_db, redis_password,
         db_host ='localhost', db_port=5432, db_name='policy_db', db_user='policy_user', db_password='password',
                  clean_frequency_seconds=4,
     ):
         super().__init__(redis_host, redis_port, redis_db, redis_password)
+
+        duallog.setup('logs', f'monitor-{self.id}-')
 
         self.handler.register(EpisodeMessage, self.episode)
         self.handler.register(StartMessage, self.start)
@@ -108,23 +134,21 @@ class TensorBoardListener(Server):
                                                   db_password=db_password,
                                                   clean_frequency_seconds=clean_frequency_seconds)
 
+        # resume
         self.db = PolicyDB(db_host=db_host, db_port=db_port, db_name=db_name, db_user=db_user, db_password=db_password)
         run = self.db.get_latest()
         rundir = 'runs/' + run.run
         Path(rundir).mkdir(parents=True, exist_ok=True)
         self.tb = tensorboardX.SummaryWriter(rundir)
-        self.tb_step = TensorBoardStepWriter(rundir)
-
+        self.tb_step = RedisStep(run.run, self.r)
         self.cleaner_process.start()
 
-    # todo need to handle resuming
     def start(self, msg):
         logging.info('Starting run ' + msg.config.run_id)
         rundir = 'runs/' + msg.config.run_id
         Path(rundir).mkdir(parents=True, exist_ok=True)
         self.tb = tensorboardX.SummaryWriter(rundir)
-        self.tb_step = TensorBoardStepWriter(rundir)
-
+        self.tb_step = RedisStep(msg.config.run_id, self.r)
 
     def episode(self, msg):
         tb_step = self.tb_step.increment()
