@@ -19,6 +19,8 @@ class Gatherer(Server):
         self.redis = self.exp_buffer.redis
         self.job = None
 
+        logger.info('Init Complete')
+
     def rollout(self, msg):
 
         logger.debug(f'gathering for rollout: {msg.rollout_id}')
@@ -33,6 +35,6 @@ class Gatherer(Server):
                 episode = single_episode_continous(env, msg.config, policy, rollout)
             else:
                 episode = single_episode(env, msg.config, policy, rollout)
-            EpisodeMessage(self.id, episode_number, len(episode), episode.total_reward(),
+            EpisodeMessage(self.id, msg.run, episode_number, len(episode), episode.total_reward(),
                            msg.config.num_steps_per_rollout).send(self.redis)
             episode_number += 1

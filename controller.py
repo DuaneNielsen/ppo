@@ -46,6 +46,7 @@ if __name__ == '__main__':
     '''
     logging.basicConfig(format='%(levelname)s-%(module)s-%(message)s', level=logging.INFO)
     logging.getLogger('peewee').setLevel(logging.INFO)
+    logging.getLogger('coordinator').setLevel(logging.INFO)
     logging.info(args)
 
     if args.trainer:

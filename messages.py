@@ -38,7 +38,7 @@ class Message:
 
     @classmethod
     def header(cls):
-        return ''
+        return cls.__name__
 
     def send(self, r):
         r.publish('rollout', self.encode())
@@ -49,68 +49,40 @@ class StartMessage(Message):
         super().__init__(server_uuid)
         self.config = config
 
-    @classmethod
-    def header(cls):
-        return 'START'
-
 
 class StopMessage(Message):
     def __init__(self, server_uuid):
         super().__init__(server_uuid)
-
-    @classmethod
-    def header(cls):
-        return 'STOP'
 
 
 class StopAllMessage(Message):
     def __init__(self, server_uuid):
         super().__init__(server_uuid)
 
-    @classmethod
-    def header(cls):
-        return 'STOPALL'
-
 
 class ResetMessage(Message):
     def __init__(self, server_uuid):
         super().__init__(server_uuid)
-
-    @classmethod
-    def header(cls):
-        return 'RESET'
 
 
 class StoppedMessage(Message):
     def __init__(self, server_uuid):
         super().__init__(server_uuid)
 
-    @classmethod
-    def header(cls):
-        return 'STOPPED'
-
 
 class ExitMessage(Message):
     def __init__(self, server_uuid):
         super().__init__(server_uuid)
-
-    @classmethod
-    def header(cls):
-        return 'EXIT'
 
 
 class PingMessage(Message):
     def __init__(self, server_uuid):
         super().__init__(server_uuid)
 
-    @classmethod
-    def header(cls):
-        return 'PING'
-
 
 class PongMessage(Message):
     def __init__(self, server__uuid, server_info):
-        super().__init__('PONG', server__uuid)
+        super().__init__(server__uuid)
         self.server_info = server_info
 
 
@@ -120,19 +92,17 @@ class TrainMessage(Message):
         self.policy = policy
         self.config = config
 
-    @classmethod
-    def header(cls):
-        return 'train'
+
+class StartMonitoringMessage(Message):
+    def __init__(self, server_uuid, run):
+        super().__init__(server_uuid)
+        self.run = run
 
 
 class ConfigUpdateMessage(Message):
     def __init__(self, server_uuid, config):
         super().__init__(server_uuid)
         self.config = config
-
-    @classmethod
-    def header(cls):
-        return 'config_update'
 
 
 class TrainCompleteMessage(Message):
@@ -141,46 +111,32 @@ class TrainCompleteMessage(Message):
         self.policy = policy
         self.config = config
 
-    @classmethod
-    def header(cls):
-        return 'train_complete'
-
 
 class TrainingProgress(Message):
     def __init__(self, server_uuid, steps):
         super().__init__(server_uuid)
         self.steps = steps
 
-    @classmethod
-    def header(cls):
-        return 'training_progress'
-
 
 class EpisodeMessage(Message):
-    def __init__(self, server_uuid, id, steps, total_reward, num_steps_rollout):
+    def __init__(self, server_uuid, run, episode_number, steps, total_reward, num_steps_rollout):
         super().__init__(server_uuid)
-        self.id = id
+        self.run = run
+        self.id = episode_number
         self.steps = int(steps)
         self.total_reward = float(total_reward)
         self.num_steps_per_rollout = int(num_steps_rollout)
         self.monitor = {}
 
-    @classmethod
-    def header(cls):
-        return 'episode'
-
 
 class RolloutMessage(Message):
-    def __init__(self, server_uuid, rollout_id, policy, config, episodes):
+    def __init__(self, server_uuid, run, rollout_id, policy, config, episodes):
         super().__init__(server_uuid)
+        self.run = run
         self.policy = policy
         self.rollout_id = int(rollout_id)
         self.config = config
         self.episodes = episodes
-
-    @classmethod
-    def header(cls):
-        return 'rollout'
 
 
 class MessageHandler:

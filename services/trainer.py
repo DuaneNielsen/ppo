@@ -13,16 +13,19 @@ class Trainer(Server):
         self.handler.register(TrainMessage, self.handle_train)
         self.exp_buffer = Db(host=redis_host, port=redis_port, db=redis_db, password=redis_password)
 
+        logger.info('Init Complete')
+
     def handle_train(self, msg):
         rollout = self.exp_buffer.latest_rollout(msg.config)
         assert len(rollout) != 0
         dataset = RolloutDatasetBase(msg.config, rollout)
         policy = msg.policy
 
-        logger.debug('started training')
+        logger.info('started training')
         if msg.config.continuous:
             train_ppo_continuous(policy, dataset, msg.config)
         else:
             train_policy(policy, dataset, msg.config)
-        logging.debug('training complete')
+
+        logging.info('training complete')
         TrainCompleteMessage(self.id, policy, msg.config).send(self.r)

@@ -9,9 +9,9 @@ import duallog
 import tensorboardX
 
 from services.server import Server
-from messages import EpisodeMessage, StartMessage
+from messages import EpisodeMessage, StartMonitoringMessage
 from policy_db import PolicyDB
-import redis
+
 
 logger = logging.getLogger(__name__)
 
@@ -56,15 +56,18 @@ class TensorBoardCleaner(multiprocessing.Process):
 
 
 class RedisStep:
-    def __init__(self, run, redis):
+    def __init__(self, redis):
         self.redis = redis
 
-        self.key = run + '_step'
-        if self.redis.get(self.key) is None:
-            self.redis.set(run + '_step', 0)
+    def key(self, run):
+        return run + '_step'
 
-    def increment(self):
-        return self.redis.incr(self.key)
+    def increment(self, run):
+        key = self.key(run)
+        if self.redis.get(key) is None:
+            self.redis.set(key, 0)
+
+        return self.redis.incr(key)
 
 
 class TensorBoardStepWriter:
@@ -127,7 +130,7 @@ class TensorBoardListener(Server):
         duallog.setup('logs', f'monitor-{self.id}-')
 
         self.handler.register(EpisodeMessage, self.episode)
-        self.handler.register(StartMessage, self.start)
+        self.handler.register(StartMonitoringMessage, self.start)
         self.tb_step = 0
         self.cleaner = clean_frequency_seconds
         self.cleaner_process = TensorBoardCleaner(db_host=db_host, db_port=db_port, db_name=db_name, db_user=db_user,
@@ -140,17 +143,19 @@ class TensorBoardListener(Server):
         rundir = 'runs/' + run.run
         Path(rundir).mkdir(parents=True, exist_ok=True)
         self.tb = tensorboardX.SummaryWriter(rundir)
-        self.tb_step = RedisStep(run.run, self.r)
+        self.tb_step = RedisStep(self.r)
         self.cleaner_process.start()
 
+        logger.info('Init Complete')
+
     def start(self, msg):
-        logger.info('Starting run ' + msg.config.run_id)
-        rundir = 'runs/' + msg.config.run_id
+        logger.info('Starting run ' + msg.run)
+        rundir = 'runs/' + msg.run
         Path(rundir).mkdir(parents=True, exist_ok=True)
         self.tb = tensorboardX.SummaryWriter(rundir)
-        self.tb_step = RedisStep(msg.config.run_id, self.r)
+        self.tb_step = RedisStep(self.r)
 
     def episode(self, msg):
-        tb_step = self.tb_step.increment()
+        tb_step = self.tb_step.increment(msg.run)
         self.tb.add_scalar('reward', msg.total_reward, tb_step)
         self.tb.add_scalar('epi_len', msg.steps, tb_step)

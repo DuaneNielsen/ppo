@@ -1,8 +1,7 @@
 import logging
 from services.server import Server
 from data import Db
-from messages import StartMessage, StopMessage, EpisodeMessage, TrainCompleteMessage, ConfigUpdateMessage, \
-    RolloutMessage, ResetMessage, TrainMessage
+from messages import *
 from models import *
 from policy_db import PolicyDB, PolicyStore
 import time
@@ -43,8 +42,11 @@ class Coordinator(Server):
         self.last_active = time.time()
         self.start_heartbeat(5, self.heartbeat)
 
+        logger.info('Init Complete')
+
     def resume(self, db):
         record = db.latest_run()
+        logger.info(f'resuming run {record.run} state f{record.run_state}')
         self.state = record.run_state
         self.config = record.config_b
 
@@ -55,7 +57,7 @@ class Coordinator(Server):
 
         if self.state != STOPPED:
             self.state = GATHERING
-            RolloutMessage(self.id, rollout.id, self.policy, self.config, self.config.episodes_per_gatherer).send(
+            RolloutMessage(self.id, self.config.run_id, rollout.id, self.policy, self.config, self.config.episodes_per_gatherer).send(
                 self.r)
 
     def init_policy(self, config):
@@ -76,40 +78,50 @@ class Coordinator(Server):
         return policy
 
     def handle_start(self, msg):
+        logger.info(f'started run {msg.config.run_id}')
         self.state = GATHERING
         self.config = msg.config
-
         self.policy = self.init_policy(self.config)
 
-        ResetMessage(self.id).send(self.r)
+        # setup monitoring for the new run
+        self.db.write_policy(self.config.run_id, self.state, self.policy.state_dict(), {'ave_reward_episode': 0.0}, self.config)
+        StartMonitoringMessage(self.id, msg.config.run_id).send(self.r)
 
+        # init the experience buffer and start the actors
         self.exp_buffer.clear_rollouts()
         rollout = self.exp_buffer.create_rollout(self.config)
-
-        RolloutMessage(self.id, rollout.id, self.policy, self.config, self.config.episodes_per_gatherer).send(self.r)
+        RolloutMessage(self.id, msg.config.run_id, rollout.id, self.policy, self.config, self.config.episodes_per_gatherer).send(self.r)
 
     def handle_episode(self, msg):
         if not self.state == STOPPED:
             rollout = self.exp_buffer.latest_rollout(self.config)
             steps = len(rollout)
+
             if steps >= self.config.num_steps_per_rollout and not self.state == TRAINING:
-                logger.debug(f'Starting training with {steps} steps')
+                # experience buffer is full, start training
+                logger.info(f'Starting training with {steps} steps')
                 rollout.finalize()
                 self.state = TRAINING
+
+                # capture statistics from the exp buffer
                 total_reward = 0
                 for episode in rollout:
                     total_reward += episode.total_reward()
                 ave_reward = total_reward / rollout.num_episodes()
                 stats = {'ave_reward_episode': ave_reward}
+
+                # and save the policy
                 self.db.write_policy(self.config.run_id, self.state, self.policy.state_dict(), stats, self.config)
                 self.db.update_reservoir(self.config.run_id, self.config.policy_reservoir_depth)
                 self.db.update_best(self.config.run_id, self.config.policy_top_depth)
                 self.db.prune(self.config.run_id)
+
                 TrainMessage(self.id, self.policy, self.config).send(self.r)
+
         self.last_active = time.time()
 
     def handle_train_complete(self, msg):
-        logger.debug('Training completed')
+        logger.info('Training completed')
 
         self.policy = msg.policy
         ResetMessage(self.id).send(self.r)
@@ -118,7 +130,7 @@ class Coordinator(Server):
         rollout = self.exp_buffer.create_rollout(self.config)
 
         if not self.state == STOPPED:
-            RolloutMessage(self.id, rollout.id, msg.policy, self.config, self.config.episodes_per_gatherer).send(self.r)
+            RolloutMessage(self.id, self.config.run_id, rollout.id, msg.policy, self.config, self.config.episodes_per_gatherer).send(self.r)
             self.state = GATHERING
         self.last_active = time.time()
 
@@ -128,7 +140,7 @@ class Coordinator(Server):
         self.db.set_state_latest(STOPPED)
 
     def handle_config_update(self, msg):
-        logger.debug(f'Got config update')
+        logger.info(f'Got config update')
 
         run = self.db.latest_run()
         record = self.db.best(run.run).get()
@@ -142,7 +154,7 @@ class Coordinator(Server):
 
         self.state = GATHERING
 
-        RolloutMessage(self.id, rollout.id, self.policy, self.config, self.config.episodes_per_gatherer).send(self.r)
+        RolloutMessage(self.id, self.config.run_id, rollout.id, self.policy, self.config, self.config.episodes_per_gatherer).send(self.r)
 
     def heartbeat(self):
         time_inactive = time.time() - self.last_active
@@ -153,5 +165,5 @@ class Coordinator(Server):
                 # database connection must be formed inside the thread
                 db = PolicyDB(db_host=self.db_host, db_port=self.db_port, db_name=self.db_name,
                               db_user=self.db_user, db_password=self.db_password)
-                logging.debug(f'Heartbeat: inactive for {time_inactive} => resuming')
+                logging.info(f'Heartbeat: inactive for {time_inactive} in {self.state} state.  Attempting resume')
                 self.resume(db)

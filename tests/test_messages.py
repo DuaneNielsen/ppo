@@ -79,13 +79,14 @@ def test_simple_messages():
 
 
 def test_episode_message(uid):
-    msg = EpisodeMessage(uid, 2000, 3000, 53.7, 30)
+    msg = EpisodeMessage(uid, 'CartPole-v1_345', 2000, 3000, 53.7, 30)
     msg.monitor['entropy'] = 0.4334643554
     msg.monitor['loss'] = 0.34343e-6
 
     msg, decoded_msg = send_message(msg)
 
     assert msg.server_uuid == decoded_msg.server_uuid
+    assert decoded_msg.run == 'CartPole-v1_345'
     assert decoded_msg.id == 2000
     assert decoded_msg.steps == 3000
     assert decoded_msg.total_reward == 53.7
@@ -96,9 +97,10 @@ def test_episode_message(uid):
 
 def test_rollout_message(uid, config, policy):
 
-    msg, decoded_msg = send_message(RolloutMessage(uuid4(), 100, policy, config, 1000))
+    msg, decoded_msg = send_message(RolloutMessage(uuid4(), 'CartPole-v1_345', 100, policy, config, 1000))
 
     assert torch.equal(policy.new.l1_mu.weight,  decoded_msg.policy.new.l1_mu.weight)
     assert decoded_msg.rollout_id == 100
     assert decoded_msg.episodes == 1000
+    assert decoded_msg.run == 'CartPole-v1_345'
 

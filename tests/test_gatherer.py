@@ -36,7 +36,7 @@ def test_gatherer_exit(r):
     ExitMessage(s.id).send(r)
 
 
-class TestServer(Server):
+class ListenTestServer(Server):
     def __init__(self, r):
         super().__init__(redis_client=r)
         self.handler.register(EpisodeMessage, self.episode)
@@ -49,7 +49,7 @@ def test_gatherer_processing(r):
     s = Gatherer()
     ServerThread(s).start()
 
-    tst = TestServer(r)
+    tst = ListenTestServer(r)
     ServerThread(tst).start()
 
     config = LunarLander()
@@ -57,7 +57,7 @@ def test_gatherer_processing(r):
     db = Db(redis_client=r)
     rollout = db.create_rollout(config)
 
-    RolloutMessage(s.id, rollout.id, policy_net, config, 10).send(r)
+    RolloutMessage(s.id, 'LunarLander-v1_xxx', rollout.id, policy_net, config, 10).send(r)
 
     sleep(5)
 
@@ -70,7 +70,7 @@ def test_gatherer_processing_continuous(r):
     s = Gatherer()
     ServerThread(s).start()
 
-    tst = TestServer(r)
+    tst = ListenTestServer(r)
     ServerThread(tst).start()
 
     config = HalfCheetah()
@@ -79,7 +79,7 @@ def test_gatherer_processing_continuous(r):
     db = Db(redis_client=r)
     rollout = db.create_rollout(config)
 
-    RolloutMessage(s.id, rollout.id, policy_net, config, 10).send(r)
+    RolloutMessage(s.id, 'LunarLander-v1_xxx', rollout.id, policy_net, config, 10).send(r)
 
     sleep(5)
 
