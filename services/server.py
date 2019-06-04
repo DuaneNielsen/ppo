@@ -7,6 +7,8 @@ import redis
 import sched
 from messages import MessageHandler, ExitMessage, PingMessage, PongMessage
 
+logger = logging.getLogger(__name__)
+
 
 class Server:
     def __init__(self, redis_host='localhost', redis_port=6379, redis_db=0, redis_password=None, redis_client=None):
@@ -29,13 +31,13 @@ class Server:
                 self.retry_count = 0
                 self.handler.listen()
             except redis.exceptions.ConnectionError as e:
-                logging.error(e)
+                logger.error(e)
                 self.retry_count += 1
                 sleep(self.retry_count)
                 continue
             except Exception as e:
-                logging.error(e)
-                logging.debug(traceback.format_exc())
+                logger.error(e)
+                logger.debug(traceback.format_exc())
                 self.retry_count += 1
                 continue
 
@@ -64,7 +66,7 @@ class ServerHeartBeat(multiprocessing.Process):
 
     def beat(self):
         try:
-            logging.debug('HEARTBEAT')
+            logger.debug('HEARTBEAT')
             self.func(**self.kwargs)
 
         finally:

@@ -3,6 +3,7 @@ from torch import nn
 from torch.nn import functional as NN
 import copy
 import logging
+from messages import ModuleHandler
 
 
 class MultiPolicyNet(nn.Module):
@@ -96,6 +97,7 @@ class MultiPolicyNetContinuousV2(nn.Module):
     def max_action(self, mu, sigma):
         return mu
 
+
 class PPOWrapModel(nn.Module):
     def __init__(self, model):
         super().__init__()
@@ -116,6 +118,11 @@ class PPOWrapModel(nn.Module):
         self.old.load_state_dict(self.new.state_dict())
 
 
+# this is needed to make the model serializable
+# a small price to pay for jsonpickle messages
+ModuleHandler.handles(PPOWrapModel)
+
+
 class PPOWrap(nn.Module):
     def __init__(self, features, action_map, hidden=200):
         super().__init__()
@@ -134,3 +141,7 @@ class PPOWrap(nn.Module):
 
     def backup(self):
         self.old.load_state_dict(self.new.state_dict())
+
+
+# make it transmittable
+ModuleHandler.handles(PPOWrap)

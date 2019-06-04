@@ -1,72 +1,47 @@
-import base64
-import json
+import jsonpickle
 import pickle
-import logging
+import base64
 
 
-def encode(object):
-    env_pickle = pickle.dumps(object, 0)
-    return base64.b64encode(env_pickle).decode()
+class ModuleHandler(jsonpickle.handlers.BaseHandler):
+    def flatten(self, obj, data):
+        env_pickle = pickle.dumps(obj, 0)
+        data['model_bytes'] = base64.b64encode(env_pickle).decode()
+        return data
+
+    def restore(self, data):
+        encoded = data['model_bytes']
+        decoded = base64.b64decode(encoded)
+        return pickle.loads(decoded)
 
 
-def decode(object):
-    return pickle.loads(base64.b64decode(object.encode()))
+class JSONPickleCoder:
+    @staticmethod
+    def encode(msg):
+        return jsonpickle.encode(msg)
 
-
-class MessageDecoder:
-    def __init__(self):
-        self.lookup = {}
-        self.register(RolloutMessage)
-        self.register(EpisodeMessage)
-        self.register(StopMessage)
-        self.register(StopAllMessage)
-        self.register(StoppedMessage)
-        self.register(ResetMessage)
-        self.register(TrainingProgress)
-        self.register(StartMessage)
-        self.register(TrainMessage)
-        self.register(TrainCompleteMessage)
-        self.register(ExitMessage)
-        self.register(ConfigUpdateMessage)
-        self.register(PingMessage)
-        self.register(PongMessage)
-
-    def register(self, message_class):
-        """ Registers a message class's decode in a lookup table"""
-        self.lookup[message_class.header()] = message_class.decode
-
-    def decode(self, message):
-        d = json.loads(message['data'])
-        msg = d['msg']
-
-        # lookup the decode method and pass it the message
-        if msg in self.lookup:
-            return self.lookup[msg](d)
-        else:
-            raise Exception
+    @staticmethod
+    def decode(encoded):
+        return jsonpickle.decode(encoded)
 
 
 class Message:
     def __init__(self, server_uuid):
-        self.content = None
         self._header = self.header()
         self.server_uuid = server_uuid
-        self._header_content = f'"msg":"{self._header}", "server_uuid": "{self.server_uuid}"'
 
     def encode(self):
-        self.content = f'{{{self._header_content}}}'
+        return JSONPickleCoder.encode(self)
 
-    def send(self, r):
-        self.encode()
-        r.publish('rollout', self.content)
+    def decode(self, encoded):
+        return JSONPickleCoder.decode(encoded)
 
     @classmethod
     def header(cls):
-        return cls.header()
+        return ''
 
-    @classmethod
-    def decode(cls, d):
-        return cls(d['server_uuid'])
+    def send(self, r):
+        r.publish('rollout', self.encode())
 
 
 class StartMessage(Message):
@@ -74,25 +49,9 @@ class StartMessage(Message):
         super().__init__(server_uuid)
         self.config = config
 
-    def encode(self):
-        env_pickle = encode(self.config)
-        self.content = \
-            (
-                f'{{'
-                f'{self._header_content},'
-                f'"env_config": "{env_pickle}"'
-                f'}}'
-            )
-
     @classmethod
     def header(cls):
         return 'START'
-
-    @classmethod
-    def decode(cls, d):
-        server_uuid = d['server_uuid']
-        config = decode(d['env_config'])
-        return StartMessage(server_uuid, config)
 
 
 class StopMessage(Message):
@@ -123,8 +82,8 @@ class ResetMessage(Message):
 
 
 class StoppedMessage(Message):
-    def __init__(self, server__uuid):
-        super().__init__(server__uuid)
+    def __init__(self, server_uuid):
+        super().__init__(server_uuid)
 
     @classmethod
     def header(cls):
@@ -132,8 +91,8 @@ class StoppedMessage(Message):
 
 
 class ExitMessage(Message):
-    def __init__(self, server__uuid):
-        super().__init__(server__uuid)
+    def __init__(self, server_uuid):
+        super().__init__(server_uuid)
 
     @classmethod
     def header(cls):
@@ -141,8 +100,8 @@ class ExitMessage(Message):
 
 
 class PingMessage(Message):
-    def __init__(self, server__uuid):
-        super().__init__(server__uuid)
+    def __init__(self, server_uuid):
+        super().__init__(server_uuid)
 
     @classmethod
     def header(cls):
@@ -151,27 +110,8 @@ class PingMessage(Message):
 
 class PongMessage(Message):
     def __init__(self, server__uuid, server_info):
-        super().__init__(server__uuid)
+        super().__init__('PONG', server__uuid)
         self.server_info = server_info
-
-    def encode(self):
-        self.content = \
-            (
-                f'{{ '
-                f'{self._header_content}, '
-                f'"server_info":"{self.server_info}"'
-                f'}}'
-            )
-
-    @classmethod
-    def header(cls):
-        return 'PONG'
-
-    @classmethod
-    def decode(cls, d):
-        server_uuid = d['server_uuid']
-        server_info = d['server_info']
-        return PongMessage(server_uuid, server_info)
 
 
 class TrainMessage(Message):
@@ -180,28 +120,9 @@ class TrainMessage(Message):
         self.policy = policy
         self.config = config
 
-    def encode(self):
-        env_pickle = encode(self.config)
-        policy_pickle = encode(self.policy)
-        self.content = \
-            (
-                f'{{ '
-                f'{self._header_content}, '
-                f'"policy":"{policy_pickle}", '
-                f'"env_config":"{env_pickle}" '
-                f'}}'
-            )
-
     @classmethod
     def header(cls):
         return 'train'
-
-    @classmethod
-    def decode(cls, d):
-        server_uuid = d['server_uuid']
-        policy = decode(d['policy'])
-        config = decode(d['env_config'])
-        return TrainMessage(server_uuid, policy, config)
 
 
 class ConfigUpdateMessage(Message):
@@ -209,25 +130,9 @@ class ConfigUpdateMessage(Message):
         super().__init__(server_uuid)
         self.config = config
 
-    def encode(self):
-        config_pickle = encode(self.config)
-        self.content = \
-            (
-                f'{{ '
-                f'{self._header_content}, '
-                f'"config":"{config_pickle}" '
-                f'}}'
-            )
-
     @classmethod
     def header(cls):
         return 'config_update'
-
-    @classmethod
-    def decode(cls, d):
-        server_uuid = d['server_uuid']
-        config = decode(d['config'])
-        return ConfigUpdateMessage(server_uuid, config)
 
 
 class TrainCompleteMessage(Message):
@@ -236,28 +141,9 @@ class TrainCompleteMessage(Message):
         self.policy = policy
         self.config = config
 
-    def encode(self):
-        env_pickle = encode(self.config)
-        policy_pickle = encode(self.policy)
-        self.content = \
-            (
-                f'{{ '
-                f'{self._header_content}, '
-                f'"policy":"{policy_pickle}", '
-                f'"env_config":"{env_pickle}" '
-                f'}}'
-            )
-
     @classmethod
     def header(cls):
         return 'train_complete'
-
-    @classmethod
-    def decode(cls, d):
-        server_uuid = d['server_uuid']
-        policy = decode(d['policy'])
-        config = decode(d['env_config'])
-        return TrainCompleteMessage(server_uuid, policy, config)
 
 
 class TrainingProgress(Message):
@@ -269,13 +155,6 @@ class TrainingProgress(Message):
     def header(cls):
         return 'training_progress'
 
-    def encode(self):
-        self.content = f'{{ {self._header_content}, "steps":{self.steps} }}'
-
-    @classmethod
-    def decode(cls, encoded):
-        return TrainingProgress(encoded['server_uuid'], encoded['steps'])
-
 
 class EpisodeMessage(Message):
     def __init__(self, server_uuid, id, steps, total_reward, num_steps_rollout):
@@ -284,27 +163,11 @@ class EpisodeMessage(Message):
         self.steps = int(steps)
         self.total_reward = float(total_reward)
         self.num_steps_per_rollout = int(num_steps_rollout)
-
-    def encode(self):
-        self.content = \
-            (
-                f'{{ '
-                f'{self._header_content}, '
-                f'"id":"{self.id}", '
-                f'"steps":"{self.steps}", '
-                f'"total_reward":"{self.total_reward}", '
-                f'"num_steps_per_rollout":"{self.num_steps_per_rollout}" '
-                f'}}'
-            )
+        self.monitor = {}
 
     @classmethod
     def header(cls):
         return 'episode'
-
-    @classmethod
-    def decode(cls, encoded):
-        return EpisodeMessage(encoded['server_uuid'], encoded['id'], encoded['steps'],
-                              encoded['total_reward'], encoded['num_steps_per_rollout'])
 
 
 class RolloutMessage(Message):
@@ -315,49 +178,25 @@ class RolloutMessage(Message):
         self.config = config
         self.episodes = episodes
 
-    def encode(self):
-        env_pickle = encode(self.config)
-        policy_pickle = encode(self.policy)
-        self.content = \
-            (
-                f'{{ '
-                f'{self._header_content}, '
-                f'"rollout_id":"{self.rollout_id}", '
-                f'"policy":"{policy_pickle}", '
-                f'"env_config":"{env_pickle}", '
-                f'"episodes":"{self.episodes}" '
-                f'}}'
-            )
-
     @classmethod
     def header(cls):
         return 'rollout'
-
-    @classmethod
-    def decode(cls, d):
-        server_uuid = d['server_uuid']
-        id = d['rollout_id']
-        policy = decode(d['policy'])
-        config = decode(d['env_config'])
-        episodes = d['episodes']
-        return RolloutMessage(server_uuid, id, policy, config, episodes)
 
 
 class MessageHandler:
     def __init__(self, redis, channel):
         self.p = redis.pubsub()
         self.p.subscribe(channel)
-        self.decoder = MessageDecoder()
         self.handler = {}
 
     def register(self, msg, callback):
-        self.handler[msg.header()] = callback
+        self.handler[msg.header] = callback
 
     def handle(self, message):
         if message['type'] == "message":
-            msg = self.decoder.decode(message)
-            if msg.header() in self.handler:
-                callback = self.handler[msg.header()]
+            msg = JSONPickleCoder.decode(message['data'])
+            if msg.header in self.handler:
+                callback = self.handler[msg.header]
                 if callback is not None:
                     callback(msg)
 

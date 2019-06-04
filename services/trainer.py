@@ -5,8 +5,7 @@ from messages import TrainMessage, TrainCompleteMessage
 from ppo_clip_discrete import train_policy, train_ppo_continuous
 
 logger = logging.getLogger(__name__)
-logging.basicConfig(format='%(levelname)s-%(module)s-%(message)s', level=logging.INFO)
-logging.getLogger('peewee').setLevel(logging.INFO)
+
 
 class Trainer(Server):
     def __init__(self, redis_host='localhost', redis_port=6379, redis_db=0, redis_password=None):
@@ -20,7 +19,7 @@ class Trainer(Server):
         dataset = RolloutDatasetBase(msg.config, rollout)
         policy = msg.policy
 
-        logging.debug('started training')
+        logger.debug('started training')
         if msg.config.continuous:
             train_ppo_continuous(policy, dataset, msg.config)
         else:

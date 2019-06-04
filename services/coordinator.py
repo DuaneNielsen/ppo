@@ -1,5 +1,4 @@
 import logging
-import duallog
 from services.server import Server
 from data import Db
 from messages import StartMessage, StopMessage, EpisodeMessage, TrainCompleteMessage, ConfigUpdateMessage, \
@@ -8,12 +7,16 @@ from models import *
 from policy_db import PolicyDB, PolicyStore
 import time
 
+logger = logging.getLogger(__name__)
+
 GATHERING = 'GATHERING'
 STOPPED = 'STOPPED'
 TRAINING = 'TRAINING'
 
+
 class ModelNotFoundException(Exception):
     pass
+
 
 class Coordinator(Server):
     def __init__(self, redis_host='localhost', redis_port=6379, redis_db=0, redis_password=None,
@@ -36,7 +39,6 @@ class Coordinator(Server):
         self.config = None
         self.policy = None
         self.state = STOPPED
-        duallog.setup('logs', 'co-ordinator')
         self.resume(self.db)
         self.last_active = time.time()
         self.start_heartbeat(5, self.heartbeat)
@@ -91,7 +93,7 @@ class Coordinator(Server):
             rollout = self.exp_buffer.latest_rollout(self.config)
             steps = len(rollout)
             if steps >= self.config.num_steps_per_rollout and not self.state == TRAINING:
-                logging.debug(f'Starting training with {steps} steps')
+                logger.debug(f'Starting training with {steps} steps')
                 rollout.finalize()
                 self.state = TRAINING
                 total_reward = 0
@@ -107,7 +109,7 @@ class Coordinator(Server):
         self.last_active = time.time()
 
     def handle_train_complete(self, msg):
-        logging.debug('Training completed')
+        logger.debug('Training completed')
 
         self.policy = msg.policy
         ResetMessage(self.id).send(self.r)
@@ -121,12 +123,12 @@ class Coordinator(Server):
         self.last_active = time.time()
 
     def handle_stop(self, msg):
-        logging.debug('Got STOP message')
+        logger.debug('Got STOP message')
         self.state = STOPPED
         self.db.set_state_latest(STOPPED)
 
     def handle_config_update(self, msg):
-        logging.debug(f'Got config update')
+        logger.debug(f'Got config update')
 
         run = self.db.latest_run()
         record = self.db.best(run.run).get()
@@ -144,7 +146,7 @@ class Coordinator(Server):
 
     def heartbeat(self):
         time_inactive = time.time() - self.last_active
-        logging.debug(
+        logger.debug(
             f'Heartbeat state : {self.state},  time_inactive: {time_inactive}, timeout: {self.config.timeout}')
         if self.state == GATHERING or self.state == TRAINING:
             if time_inactive > self.config.timeout:

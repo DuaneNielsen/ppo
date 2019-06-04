@@ -41,6 +41,11 @@ if __name__ == '__main__':
 
     args = parser.parse_args()
 
+    '''
+    Logging is controlled from here
+    '''
+    logging.basicConfig(format='%(levelname)s-%(module)s-%(message)s', level=logging.INFO)
+    logging.getLogger('peewee').setLevel(logging.INFO)
     logging.info(args)
 
     if args.trainer:

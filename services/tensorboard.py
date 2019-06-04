@@ -13,7 +13,7 @@ from messages import EpisodeMessage, StartMessage
 from policy_db import PolicyDB
 import redis
 
-logging.getLogger('peewee').setLevel(logging.INFO)
+logger = logging.getLogger(__name__)
 
 
 class TensorBoardCleaner(multiprocessing.Process):
@@ -46,11 +46,11 @@ class TensorBoardCleaner(multiprocessing.Process):
 
         # cleanup the run directory
         for parent, file in dirs_to_delete.items():
-            logging.debug(file.parent, file.name, file.stat().st_size)
+            logger.debug(file.parent, file.name, file.stat().st_size)
             try:
                 shutil.rmtree(str(file))
             except:
-                logging.error(f"OS didn't let us delete {str(file.parent)}")
+                logger.error(f"OS didn't let us delete {str(file.parent)}")
 
         self.schedule.enter(self.clean_frequency_seconds, 0, self.clean)
 
@@ -144,7 +144,7 @@ class TensorBoardListener(Server):
         self.cleaner_process.start()
 
     def start(self, msg):
-        logging.info('Starting run ' + msg.config.run_id)
+        logger.info('Starting run ' + msg.config.run_id)
         rundir = 'runs/' + msg.config.run_id
         Path(rundir).mkdir(parents=True, exist_ok=True)
         self.tb = tensorboardX.SummaryWriter(rundir)

@@ -10,6 +10,12 @@ from data import SingleProcessDataSet, StepCoder, NumpyCoder, AdvancedStepCoder
 import logging
 import models
 
+
+def load_model(config, parameters):
+    model = config.model.get_model()
+    return model.load_state_dict(parameters)
+
+
 class DefaultPrePro:
     def __call__(self, observation_t1, observation_t0):
         return observation_t1 - observation_t0
@@ -151,6 +157,8 @@ class DiscreteConfig(BaseConfig):
         super().__init__(gym_env_string, step_coder, discount_factor, prepro, transform)
         self.action_map = action_map
         self.default_action = default_action
+    def get_model(self):
+        return
 
 
 class ContinuousConfig(BaseConfig):

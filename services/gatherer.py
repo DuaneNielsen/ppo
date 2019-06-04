@@ -2,11 +2,12 @@ import logging
 
 import gym
 
-import duallog
 from services.server import Server
 from data import Db
 from messages import RolloutMessage, EpisodeMessage
 from rollout import single_episode, single_episode_continous
+
+logger = logging.getLogger(__name__)
 
 
 class Gatherer(Server):
@@ -18,19 +19,16 @@ class Gatherer(Server):
         self.redis = self.exp_buffer.redis
         self.job = None
 
-        duallog.setup('logs', f'gatherer-{self.id}-')
-
     def rollout(self, msg):
 
-        logging.debug(f'gathering for rollout: {msg.rollout_id}')
-
+        logger.debug(f'gathering for rollout: {msg.rollout_id}')
         policy = msg.policy.to('cpu').eval()
         env = gym.make(msg.config.gym_env_string)
         rollout = self.exp_buffer.rollout(msg.rollout_id, msg.config)
         episode_number = 0
 
         while self.exp_buffer.rollout_seq.current() == msg.rollout_id and len(rollout) < msg.config.num_steps_per_rollout:
-            logging.info(f'starting episode {episode_number} of {msg.config.gym_env_string}')
+            logger.info(f'starting episode {episode_number} of {msg.config.gym_env_string}')
             if msg.config.continuous:
                 episode = single_episode_continous(env, msg.config, policy, rollout)
             else:
