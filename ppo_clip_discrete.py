@@ -38,8 +38,7 @@ def ppo_loss(newprob, oldprob, advantage, clip=0.2):
 def ppo_loss_log(newlogprob, oldlogprob, advantage, clip=0.2):
     log_ratio = (newlogprob - oldlogprob)
     # clamp the log to stop infinities (85 is for 32 bit floats)
-    # todo test what happens if we remove the clamp
-    #log_ratio.clamp_(min=-2.0, max=2.0)
+    log_ratio.clamp_(min=-80.0, max=80.0)
     ratio = torch.exp(log_ratio)
 
     clipped_ratio = ratio.clamp(1.0 - clip, 1.0 + clip)
