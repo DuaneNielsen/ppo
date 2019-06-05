@@ -1,7 +1,7 @@
 from models import PPOWrap, MultiPolicyNetContinuous, PPOWrapModel
 import configs
 from data import RolloutDatasetBase
-from ppo_clip_discrete import train_policy, train_ppo_continuous
+from algos import *
 import gym
 import roboschool
 from util import UniImageViewer, timeit
@@ -40,12 +40,12 @@ def test_ppo_clip_discrete():
     config = configs.LunarLander()
     model = config.model.get_model()
     policy_net = PPOWrapModel(model)
+    ppo = PurePPOClip()
 
     for epoch in range(3):
 
-        rollout = rollout_policy(3, policy_net, config)
-        dataset = RolloutDatasetBase(config, rollout)
-        train_policy(policy_net, dataset, config)
+        exp_buffer = rollout_policy(3, policy_net, config)
+        ppo(policy_net, exp_buffer, config)
         assert True
 
 
@@ -54,9 +54,9 @@ def test_ppo_clip_continuous(capsys):
     config = configs.HalfCheetah()
     model = MultiPolicyNetContinuous(config.model.features_size, config.model.action_size, config.model.hidden_size)
     policy_net = PPOWrapModel(model)
+    ppo = PurePPOClip()
 
     for epoch in range(30):
 
-        rollout = rollout_policy(10, policy_net, config, capsys)
-        dataset = RolloutDatasetBase(config, rollout)
-        train_policy(policy_net, dataset, config)
+        exp_buffer = rollout_policy(10, policy_net, config, capsys)
+        ppo(policy_net, exp_buffer, config)

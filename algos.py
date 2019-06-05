@@ -15,6 +15,7 @@ if gpu_profile:
 
 logger = logging.getLogger(__name__)
 from time import time
+from data import RolloutDatasetBase
 
 def ppo_loss(newprob, oldprob, advantage, clip=0.2):
     ratio = newprob / oldprob
@@ -59,67 +60,92 @@ def ppo_loss_log(newlogprob, oldlogprob, advantage, clip=0.2):
     return min_step.mean()
 
 
-#@timeit
-def train_policy(policy, rollout_dataset, config, device='cpu'):
+class NoOptimizer(Exception):
+    pass
 
+def optimizer(config, policy):
     if config.optimizer == 'Adam':
         optim = torch.optim.Adam(lr=config.lr, params=policy.new.parameters())
-    if config.optimizer == 'LBFGS':
-        optim = torch.optim.LBFGS(params=policy.new.parameters())
-    else:
+
+    elif config.optimizer == 'SGD':
         optim = torch.optim.SGD(lr=config.lr, params=policy.new.parameters())
+    else:
+        raise NoOptimizer
 
-    policy = policy.train()
-    policy = policy.to(device)
-
-    logger.debug(len(rollout_dataset))
-
-    rollout_loader = DataLoader(rollout_dataset, batch_size=len(rollout_dataset), shuffle=True)
-    batches_p = 0
-    for i, (observation, action, reward, advantage) in enumerate(rollout_loader):
-        batches_p += 1
-        for step in range(config.ppo_steps_per_batch):
-
-            #todo catergorical distrubution loss.backward() super slow (pytorch problem)
-
-            observation = observation.to(device)
-            advantage = advantage.float().to(device)
-            action = action.squeeze().to(device)
-            optim.zero_grad()
-
-            #logging.debug(f'ACT__ {action[0].data}')
-
-            new_dist = policy(observation)
-            new_logprob = new_dist.log_prob(action)
-            new_logprob.retain_grad()
-
-            old_dist = policy(observation, old=True)
-            old_logprob = old_dist.log_prob(action)
-            policy.backup()
+    return optim
 
 
+class PurePPOClip:
+    def __call__(self, policy, exp_buffer, config, device='cpu'):
 
-            loss = ppo_loss_log(new_logprob, old_logprob, advantage, clip=0.2)
-            #logging.info(f'loss {loss.item()}')
+        optim = optimizer(config, policy)
+        policy = policy.train()
+        policy = policy.to(device)
+        dataset = RolloutDatasetBase(config, exp_buffer)
+        rollout_loader = DataLoader(dataset, batch_size=len(dataset), shuffle=True)
 
+        batches_p = 0
+        for i, (observation, action, reward, advantage) in enumerate(rollout_loader):
+            batches_p += 1
+            for step in range(config.ppo_steps_per_batch):
 
-            starttime = time()
-            loss.backward()
-            endtime = time()
+                #todo catergorical distrubution loss.backward() super slow (pytorch problem)
 
-            optim.step()
+                observation = observation.to(device)
+                advantage = advantage.float().to(device)
+                action = action.squeeze().to(device)
+                optim.zero_grad()
+
+                #logging.debug(f'ACT__ {action[0].data}')
+
+                new_dist = policy(observation)
+                new_logprob = new_dist.log_prob(action)
+                new_logprob.retain_grad()
+
+                old_dist = policy(observation, old=True)
+                old_logprob = old_dist.log_prob(action)
+                policy.backup()
 
 
 
-            logger.debug(endtime - starttime)
+                loss = ppo_loss_log(new_logprob, old_logprob, advantage, clip=0.2)
+                #logging.info(f'loss {loss.item()}')
 
-            # updated_logprob = policy(observation.squeeze().view(-1, policy.features)).squeeze()
-            # logging.debug(f'CHNGE {(torch.exp(updated_logprob) - torch.exp(new_logprob)).data[0]}')
-            # logging.debug(f'NEW_G {torch.exp(new_logprob.grad.data[0])}')
 
-    logging.info(f'processed {batches_p} batches')
-    if config.gpu_profile:
-        gpu_profile(frame=sys._getframe(), event='line', arg=None)
+                starttime = time()
+                loss.backward()
+                endtime = time()
+
+                optim.step()
+
+                logger.debug(endtime - starttime)
+
+                # updated_logprob = policy(observation.squeeze().view(-1, policy.features)).squeeze()
+                # logging.debug(f'CHNGE {(torch.exp(updated_logprob) - torch.exp(new_logprob)).data[0]}')
+                # logging.debug(f'NEW_G {torch.exp(new_logprob.grad.data[0])}')
+
+        logging.info(f'processed {batches_p} batches')
+        if config.gpu_profile:
+            gpu_profile(frame=sys._getframe(), event='line', arg=None)
+
+
+class OneStepTD:
+    def __call__(self, policy, exp_buffer, config, device='cpu'):
+
+        optim = optimizer(config, policy)
+        policy = policy.train()
+        policy = policy.to(device)
+        dataset = RolloutDatasetBase(config, exp_buffer)
+        rollout_loader = DataLoader(dataset, batch_size=len(dataset), shuffle=True)
+
+        batches_p = 0
+        for i, (state, action, reward, next_state) in enumerate(rollout_loader):
+            batches_p += 1
+            for step in range(config.ppo_steps_per_batch):
+                pass
+
+
+
 
 
 # todo need to get rid of this somehow, just format the observation correctly, or use the transform from the config
@@ -132,12 +158,8 @@ class InprobableActionException(Exception):
 
 
 def train_ppo_continuous(policy, dataset, config, device='cpu'):
-    if config.optimizer == 'Adam':
-        optim = torch.optim.Adam(lr=config.lr, params=policy.new.parameters())
-    if config.optimizer == 'LBFGS':
-        optim = torch.optim.LBFGS(params=policy.new.parameters())
-    else:
-        optim = torch.optim.SGD(lr=config.lr, params=policy.new.parameters())
+
+    optim = optimizer(config, policy)
     policy = policy.train()
     policy = policy.to(device)
 

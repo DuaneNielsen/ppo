@@ -2,9 +2,13 @@ import logging
 from services.server import Server
 from data import Db, RolloutDatasetBase
 from messages import TrainMessage, TrainCompleteMessage
-from ppo_clip_discrete import train_policy, train_ppo_continuous
+import algos
 
 logger = logging.getLogger(__name__)
+
+
+class NoTrainingAlgo(Exception):
+    pass
 
 
 class Trainer(Server):
@@ -16,13 +20,20 @@ class Trainer(Server):
         logger.info('Init Complete')
 
     def handle_train(self, msg):
-        rollout = self.exp_buffer.latest_rollout(msg.config)
-        assert len(rollout) != 0
-        dataset = RolloutDatasetBase(msg.config, rollout)
+
+        if msg.config.training_algo == 'ppo':
+            trainer = algos.PurePPOClip()
+        elif msg.config.training_algo == 'td_zero':
+            trainer = algos.OneStepTD()
+        else:
+            raise NoTrainingAlgo
+
+        exp_buffer = self.exp_buffer.latest_rollout(msg.config)
+        assert len(exp_buffer) != 0
         policy = msg.policy
 
         logger.info('started training')
-        train_policy(policy, dataset, msg.config)
+        trainer(policy, exp_buffer, msg.config)
 
         logging.info('training complete')
         TrainCompleteMessage(self.id, policy, msg.config).send(self.r)
