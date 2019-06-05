@@ -119,7 +119,7 @@ def single_episode(env, config, policy, rollout=None, v=None, render=False, disp
         done = done or episode_length > config.max_rollout_len
 
         if episode is not None:
-            episode.append(Step(observation, action, reward, done), config.episode_batch_size)
+            episode.append(Step(observation, action, reward, False), config.episode_batch_size)
 
         # compute the observation that resulted from our action
         observation = config.prepro(observation_t1, observation_t0)
@@ -129,6 +129,8 @@ def single_episode(env, config, policy, rollout=None, v=None, render=False, disp
             env.render(mode='human')
         if display_observation:
             v.render(observation)
+
+    episode.append(Step(observation, config.default_action, 0.0, True))
 
     if episode is not None:
         episode.end()

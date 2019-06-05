@@ -10,7 +10,8 @@ from bisect import bisect_right, bisect_left
 import uuid
 from redis.lock import Lock
 import logging
-import duallog
+
+logger = logging.getLogger(__name__)
 
 
 class RedisSequence:
@@ -68,6 +69,8 @@ class RolloutDatasetAbstract(Dataset, metaclass=ABCMeta):
         pass
 
 
+#todo deal with the sentinel
+#todo refactor advantage to be calculated during training
 class RolloutDatasetBase(RolloutDatasetAbstract):
     def __init__(self, env_config, rollout):
         """
@@ -89,8 +92,8 @@ class RolloutDatasetBase(RolloutDatasetAbstract):
                 self.advantage(episode)
             self.normalize()
         except Exception as e:
-            logging.error(e)
-            logging.error('exception while computing advantage')
+            logger.error(e)
+            logger.error('exception while computing advantage')
             raise e
 
     def normalize(self):
@@ -117,11 +120,37 @@ class RolloutDatasetBase(RolloutDatasetAbstract):
     def __getitem__(self, item):
         step = self.rollout[item]
         advantage = self.adv[item]
+        #todo shouldn't do this here, should be done in the training algo, datasset should just return numpy arrays
         t_obs = self.transform(step.observation)
         return t_obs, step.action, step.reward, advantage
 
     def __len__(self):
         return len(self.rollout)
+
+
+class SARSDataset(Dataset):
+
+    def __init__(self, exp_buffer):
+        self.exp_buffer = exp_buffer
+        if not self.exp_buffer.is_finalized():
+            self.exp_buffer.finalize()
+        self.index = self.build_index()
+
+    def build_index(self):
+        index = []
+        for i in range(len(self.exp_buffer)):
+            if not self.exp_buffer[i].done:
+                index.append(i)
+        return index
+
+    def __getitem__(self, item):
+        step_index = self.index[item]
+        step = self.exp_buffer[step_index]
+        next_step = self.exp_buffer[step_index + 1]
+        return step.observation, step.action, step.reward, next_step.observation
+
+    def __len__(self):
+        return len(self.index)
 
 
 class SingleProcessDataSetAbstract(RolloutDatasetAbstract):
@@ -211,6 +240,7 @@ class RedisRollout:
         self.episode_off = []
         self.len = 0
         self.env_config = env_config
+        self.finalized = []
 
     def finalize(self):
         """
@@ -222,13 +252,13 @@ class RedisRollout:
 
         lockname = self.key('lock')
         lk = Lock(self.redis, lockname)
-        #logging.debug(f'getting lock {lockname}')
+        #logger.debug(f'getting lock {lockname}')
         lk.acquire()
-        #logging.debug(f'getting lock {lockname}')
+        #logger.debug(f'getting lock {lockname}')
         self.redis.set(self.key('finalized'), 'FINALIZED')
         if lk.owned():
             lk.release()
-            #logging.debug(f'released lock {lockname}')
+            #logger.debug(f'released lock {lockname}')
 
         self.episodes = []
         self.episode_len = []
@@ -246,6 +276,8 @@ class RedisRollout:
             self.episode_off.append(offset)
             offset += l
 
+        self.finalized = True
+
     def create_episode(self):
         return Episode(self, self.redis, self.key(str(uuid.uuid4())))
 
@@ -253,6 +285,9 @@ class RedisRollout:
         if subkey == '':
             return f'rollout-{self.id}'
         return f'rollout-{self.id}-' + subkey
+
+    def is_finalized(self):
+        return self.redis.exists(self.key('finalized')) and self.finalized
 
     @staticmethod
     def find_le(a, x):
@@ -357,9 +392,9 @@ class Episode:
 
         lockname = self.rollout.key('lock')
         lk = Lock(self.redis, lockname)
-        #logging.debug(f'getting lock {lockname}')
+        #logger.debug(f'getting lock {lockname}')
         lk.acquire()
-        #logging.debug(f'got lock {lockname}')
+        #logger.debug(f'got lock {lockname}')
 
         if not self.redis.exists(self.rollout.key('finalized')):
             self.redis.lpush(self.rollout.key('episodes'), self.id)
@@ -367,14 +402,14 @@ class Episode:
 
         if lk.owned():
             lk.release()
-            #logging.debug(f'released lock {lockname}')
+            #logger.debug(f'released lock {lockname}')
 
     def total_reward(self):
         try:
             total = float(self.redis.get(self.total_reward_key))
             return total
         except (ValueError, TypeError):
-            logging.error('Error while getting total reward, returning 0')
+            logger.error('Error while getting total reward, returning 0')
             return 0
 
     def append(self, step, batch=1):
