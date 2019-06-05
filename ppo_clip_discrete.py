@@ -6,10 +6,7 @@ os.environ['GPU_DEBUG'] = '0'
 
 import torch
 from torch.utils.data import DataLoader
-from util import timeit
-import math
 import logging
-import duallog
 gpu_profile = False
 if gpu_profile:
     from util import gpu_profile
@@ -17,7 +14,7 @@ if gpu_profile:
     sys.settrace(gpu_profile)
 
 logger = logging.getLogger(__name__)
-
+from time import time
 
 def ppo_loss(newprob, oldprob, advantage, clip=0.2):
     ratio = newprob / oldprob
@@ -41,6 +38,7 @@ def ppo_loss(newprob, oldprob, advantage, clip=0.2):
 def ppo_loss_log(newlogprob, oldlogprob, advantage, clip=0.2):
     log_ratio = (newlogprob - oldlogprob)
     # clamp the log to stop infinities (85 is for 32 bit floats)
+    # todo test what happens if we remove the clamp
     log_ratio.clamp_(min=-2.0, max=2.0)
     ratio = torch.exp(log_ratio)
 
@@ -65,51 +63,70 @@ def ppo_loss_log(newlogprob, oldlogprob, advantage, clip=0.2):
 #@timeit
 def train_policy(policy, rollout_dataset, config, device='cpu'):
 
-    optim = torch.optim.Adam(lr=1e-4, params=policy.new.parameters())
+    if config.optimizer == 'Adam':
+        optim = torch.optim.Adam(lr=config.lr, params=policy.new.parameters())
+    if config.optimizer == 'LBFGS':
+        optim = torch.optim.LBFGS(params=policy.new.parameters())
+    else:
+        optim = torch.optim.SGD(lr=config.lr, params=policy.new.parameters())
+
     policy = policy.train()
     policy = policy.to(device)
 
-    batches = math.floor(len(rollout_dataset) / config.max_minibatch_size) + 1
-    batch_size = math.floor(len(rollout_dataset) / batches)
-    steps_per_batch = math.floor(12 / batches) if math.floor(12 / batches) > 0 else 1
+    logger.debug(len(rollout_dataset))
 
-    rollout_loader = DataLoader(rollout_dataset, batch_size=batch_size, shuffle=True)
+    rollout_loader = DataLoader(rollout_dataset, batch_size=len(rollout_dataset), shuffle=True)
     batches_p = 0
     for i, (observation, action, reward, advantage) in enumerate(rollout_loader):
         batches_p += 1
-        for step in range(steps_per_batch):
+        for step in range(config.ppo_steps_per_batch):
+
+            #todo catergorical distrubution is super slow (pytorch problem)
 
             observation = observation.to(device)
             advantage = advantage.float().to(device)
             action = action.squeeze().to(device)
             optim.zero_grad()
 
-            logging.debug(f'ACT__ {action[0].data}')
+            #logging.debug(f'ACT__ {action[0].data}')
 
-            new_logprob = policy(observation.squeeze().view(-1, policy.features)).squeeze()
-            new_prob = torch.exp(torch.distributions.Categorical(logits=new_logprob).log_prob(action))
+            new_dist = policy(observation)
+            new_logprob = new_dist.log_prob(action)
             new_logprob.retain_grad()
-            old_logprob = policy(observation.squeeze().view(-1, policy.features), old=True).squeeze()
-            old_prob = torch.exp(torch.distributions.Categorical(logits=old_logprob).log_prob(action))
+
+            old_dist = policy(observation, old=True)
+            old_logprob = old_dist.log_prob(action)
             policy.backup()
 
-            loss = ppo_loss(new_prob, old_prob, advantage, clip=0.2)
-            logging.info(f'loss {loss.item()}')
+
+
+            loss = ppo_loss_log(new_logprob, old_logprob, advantage, clip=0.2)
+            #logging.info(f'loss {loss.item()}')
+
+
+            starttime = time()
             loss.backward()
+            endtime = time()
+
             optim.step()
 
-            updated_logprob = policy(observation.squeeze().view(-1, policy.features)).squeeze()
-            logging.debug(f'CHNGE {(torch.exp(updated_logprob) - torch.exp(new_logprob)).data[0]}')
-            logging.debug(f'NEW_G {torch.exp(new_logprob.grad.data[0])}')
+
+
+            logger.debug(endtime - starttime)
+
+            # updated_logprob = policy(observation.squeeze().view(-1, policy.features)).squeeze()
+            # logging.debug(f'CHNGE {(torch.exp(updated_logprob) - torch.exp(new_logprob)).data[0]}')
+            # logging.debug(f'NEW_G {torch.exp(new_logprob.grad.data[0])}')
 
     logging.info(f'processed {batches_p} batches')
     if config.gpu_profile:
         gpu_profile(frame=sys._getframe(), event='line', arg=None)
 
 
-# need to get rid of this somehow
+# todo need to get rid of this somehow, just format the observation correctly, or use the transform from the config
 def format_observation(observation, features):
     return observation.squeeze().view(-1, features)
+
 
 class InprobableActionException(Exception):
     pass

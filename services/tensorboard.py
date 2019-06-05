@@ -140,10 +140,11 @@ class TensorBoardListener(Server):
         # resume
         self.db = PolicyDB(db_host=db_host, db_port=db_port, db_name=db_name, db_user=db_user, db_password=db_password)
         run = self.db.get_latest()
-        rundir = 'runs/' + run.run
-        Path(rundir).mkdir(parents=True, exist_ok=True)
-        self.tb = tensorboardX.SummaryWriter(rundir)
-        self.tb_step = RedisStep(self.r)
+        if run is not None:
+            rundir = 'runs/' + run.run
+            Path(rundir).mkdir(parents=True, exist_ok=True)
+            self.tb = tensorboardX.SummaryWriter(rundir)
+            self.tb_step = RedisStep(self.r)
         self.cleaner_process.start()
 
         logger.info('Init Complete')

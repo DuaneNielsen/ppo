@@ -2,13 +2,13 @@ import PySimpleGUI as sg
 from messages import *
 from redis import Redis
 import configs
-from models import PPOWrap, PPOWrapModel, MultiPolicyNetContinuous
+from models import PPOWrap, PPOWrapModel
 import uuid
 from datetime import datetime
 from data import Db
 import random
 import multiprocessing
-from rollout import single_episode, single_episode_continous
+from rollout import single_episode
 from policy_db import PolicyDB
 import gym
 import time
@@ -197,11 +197,8 @@ def demo(run=None, best=False, num_episodes=20):
     else:
         record = policy_db.get_latest(run.run)
     env = gym.make(record.config_b.gym_env_string)
-    if config.continuous:
-        model = config.model.get_model()
-        policy_net = PPOWrapModel(model)
-    else:
-        policy_net = PPOWrap(record.config_b.features, record.config_b.action_map, record.config_b.hidden)
+    model = config.model.get_model()
+    policy_net = PPOWrapModel(model)
     policy_net.load_state_dict(record.policy)
     demo = DemoThread(policy_net, record.config_b, env, num_episodes=num_episodes)
     demo.start()
@@ -218,10 +215,7 @@ class DemoThread(multiprocessing.Process):
     def run(self):
         for episode_number in range(self.num_episodes):
             logging.info(f'starting episode {episode_number} of {self.env_config.gym_env_string}')
-            if config.continuous:
-                single_episode_continous(self.env, self.env_config, self.policy, render=True)
-            else:
-                single_episode(self.env, self.env_config, self.policy, render=True)
+            single_episode(self.env, self.env_config, self.policy, render=True)
 
         self.env.close()
         logging.debug('exiting')
@@ -256,12 +250,16 @@ def filter_run(value):
 
 
 def init_run_table():
-    runs = [policy_db.latest_run().run]
-    best = []
-    for run in runs:
-        row = policy_db.best(run).get()
-        best.append([run.ljust(25), str(row.stats['ave_reward_episode']).ljust(10)])
-    return best
+    latest_run = policy_db.latest_run()
+    if latest_run is not None:
+        runs = [latest_run.run]
+        best = []
+        for run in runs:
+            row = policy_db.best(run).get()
+            best.append([run.ljust(25), str(row.stats['ave_reward_episode']).ljust(10)])
+        return best
+    else:
+        return [['No runs'.ljust(25), ''.ljust(10)]]
 
 
 def selected_runs(value):
@@ -358,7 +356,10 @@ if __name__ == '__main__':
     handler.register(PongMessage, handle_pong)
 
     run = policy_db.latest_run()
-    config = run.config_b
+    if run is not None:
+        config = run.config_b
+    else:
+        config = configs.default
 
     """ PROGRESS PANEL """
 

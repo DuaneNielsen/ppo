@@ -500,7 +500,7 @@ class AdvancedStepCoder:
     def encode(self, step):
         encoded = self.reward_done_coder.encode(step.reward, step.done)
         encoded += self.state_coder.encode(step.observation)
-        encoded += self.action_coder.encode(step.action)
+        encoded += self.action_coder.encode(step.action.numpy())
         return encoded
 
     def decode(self, encoded):

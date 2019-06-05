@@ -71,7 +71,6 @@ from util import timeit, UniImageViewer
 #     return rollout
 
 
-
 def single_episode(env, config, policy, rollout=None, v=None, render=False, display_observation=False):
 
     """
@@ -92,7 +91,7 @@ def single_episode(env, config, policy, rollout=None, v=None, render=False, disp
         episode = rollout.create_episode()
     episode_length = 0
     observation_t0 = env.reset()
-    action = config.default_action
+    action = config.action_transform(config.default_action)
     observation_t1, reward, done, info = env.step(action)
     observation = config.prepro(observation_t1, observation_t0)
     observation_t0 = observation_t1
@@ -101,64 +100,16 @@ def single_episode(env, config, policy, rollout=None, v=None, render=False, disp
     while not done:
         # take an action on current observation and record result
         observation_tensor = config.transform(observation, insert_batch=True)
-        action_prob = policy(observation_tensor)
-        index, action = policy.sample(action_prob)
+        action_dist = policy(observation_tensor)
 
-        observation_t1, reward, done, info = env.step(action.squeeze().item())
+        # if type(action_dist) is tuple:
+        #     action = policy.sample(*action_dist)
+        # else:
+        #     action = policy.sample(action_dist)
 
-        done = done or episode_length > config.max_rollout_len
+        action = action_dist.sample()
 
-        if episode is not None:
-            episode.append(Step(observation, index, reward, done), config.episode_batch_size)
-
-        # compute the observation that resulted from our action
-        observation = config.prepro(observation_t1, observation_t0)
-        observation_t0 = observation_t1
-
-        if render:
-            env.render(mode='human')
-        if display_observation:
-            v.render(observation)
-
-    if episode is not None:
-        episode.end()
-    return episode
-
-
-def single_episode_continous(env, config, policy, rollout=None, v=None, render=False, display_observation=False):
-
-    """
-
-    :param config: The General configuration
-    :param env: The simulator, reset will be called at the start of each episode
-    :param config: the simulator configuration
-    :param policy: the policy to run
-    :param rollout: the rollout data structure to capture experience into
-    :param v: an object with a render method for displaying images
-    :param render: if True, env.render will be called for each step
-    :param display_observation: if true, v.render(observation) will be called for each step
-    :return:
-    """
-
-    episode = None
-    if rollout is not None:
-        episode = rollout.create_episode()
-    episode_length = 0
-    observation_t0 = env.reset()
-    action = config.action_transform(torch.zeros(config.model.action_size))
-    observation_t1, reward, done, info = env.step(action)
-    observation = config.prepro(observation_t1, observation_t0)
-    observation_t0 = observation_t1
-
-    done = False
-    while not done:
-        # take an action on current observation and record result
-        observation_tensor = config.transform(observation, insert_batch=True)
-        mu, sigma = policy(observation_tensor)
-        action = policy.sample(mu, sigma)
-        action = config.action_transform(action.squeeze())
-
-        observation_t1, reward, done, info = env.step(action)
+        observation_t1, reward, done, info = env.step(config.action_transform(action))
 
         done = done or episode_length > config.max_rollout_len
 

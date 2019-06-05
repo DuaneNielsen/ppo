@@ -38,8 +38,9 @@ class InfinityException(Exception):
     pass
 
 
-class ActionTransform:
+class ContinousActionTransform:
     def __call__(self, action):
+        action = action.squeeze()
         if torch.isnan(action).any().item() == 1:
             raise InfinityException
         return action.numpy()
@@ -64,11 +65,14 @@ class EnvConfig:
 
 
 class MultiPolicyNet(ModelConfig):
-    def __init__(self, features, hidden_size, output_size):
+    def __init__(self, features, hidden_size, actions):
         super().__init__('MultiPolicyNet')
         self.features = features
         self.hidden_size = hidden_size
-        self.output_size = output_size
+        self.actions = actions
+
+    def get_model(self):
+        return models.MultiPolicyNet(self.features, self.actions, self.hidden_size)
 
 
 class MultiPolicyNetContinuous(ModelConfig):
@@ -101,7 +105,6 @@ class GymEnvConfig(EnvConfig):
 class BaseConfig:
     def __init__(self,
                  gym_env_string,
-                 step_coder,
                  discount_factor=0.99,
                  prepro=DefaultPrePro(),
                  transform=DefaultTransform(),
@@ -112,7 +115,7 @@ class BaseConfig:
 
         self.training_algo = 'ppo'
         self.model_string = 'MultiPolicyNet'
-        self.step_coder = step_coder
+        self.step_coder = None
         self.discount_factor = discount_factor
         self.max_rollout_len = 3000  #terminate episodes that go longer than this
         self.prepro = prepro
@@ -147,18 +150,23 @@ class BaseConfig:
 class DiscreteConfig(BaseConfig):
     def __init__(self,
                  gym_env_string,
-                 step_coder,
+                 features,
+                 features_dtype,
                  action_map,
                  default_action=0,
                  discount_factor=0.99,
                  prepro=DefaultPrePro(),
                  transform=DefaultTransform(),
                  ):
-        super().__init__(gym_env_string, step_coder, discount_factor, prepro, transform)
+        super().__init__(gym_env_string, discount_factor, prepro, transform)
+        self.features = features
         self.action_map = action_map
-        self.default_action = default_action
-    def get_model(self):
-        return
+        self.actions = len(action_map)
+        self.default_action = torch.tensor([default_action])
+        self.model = MultiPolicyNet(features, features, self.actions)
+        self.action_transform = models.DiscreteActionTransform(action_map)
+        self.step_coder = AdvancedStepCoder(state_shape=features, state_dtype=features_dtype,
+                                            action_shape=(1,), action_dtype=np.int64)
 
 
 class ContinuousConfig(BaseConfig):
@@ -168,18 +176,18 @@ class ContinuousConfig(BaseConfig):
                  state_space_dtype,
                  action_space_features,
                  action_space_dtype,
-                 default_action=0.0,
                  discount_factor=0.99,
                  prepro=DefaultPrePro(),
                  transform=DefaultTransform(),
                  ):
-        super().__init__(gym_env_string, None, discount_factor, prepro, transform)
+        super().__init__(gym_env_string, discount_factor, prepro, transform)
         self.state_space_features = state_space_features
         self.state_space_dtype = state_space_dtype
         self.action_space_features = action_space_features
         self.action_space_dtype = action_space_dtype
         self.continuous = True
-        self.action_transform = ActionTransform()
+        self.action_transform = ContinousActionTransform()
+        self.default_action = torch.zeros(action_space_features)
         self.step_coder = AdvancedStepCoder(state_shape=self.state_space_features, state_dtype=self.state_space_dtype,
                                             action_shape=self.action_space_features, action_dtype=self.action_space_dtype)
 
@@ -239,43 +247,34 @@ class Pong:
             return to_tensor(np.expand_dims(observation, axis=2)).view(self.features)
 
 
-class LunarLander(DiscreteConfig):
-    def __init__(self):
+class GymDiscreteConfig(DiscreteConfig):
+    def __init__(self, gym_string):
+        env = gym.make(gym_string)
+        dtype = env.reset().dtype
         super().__init__(
-            gym_env_string='LunarLander-v2',
-            step_coder=StepCoder(observation_coder=NumpyCoder(1, np.float32)),
-            action_map=[0, 1, 2, 3]
+            features=env.observation_space.shape[0],
+            features_dtype=dtype,
+            gym_env_string=gym_string,
+            action_map=[n for n in range(env.action_space.n)]
         )
-        self.features = 8
         self.hidden = 8
         self.adversarial = False
         self.players = 1
 
 
-class CartPole(DiscreteConfig):
+class LunarLander(GymDiscreteConfig):
     def __init__(self):
-        super().__init__(
-            gym_env_string='CartPole-v0',
-            step_coder=StepCoder(observation_coder=NumpyCoder(1, np.float64)),
-            action_map=[0, 1]
-        )
-        self.features = 4
-        self.hidden = 8
-        self.adversarial = False
-        self.players = 1
+        super().__init__('LunarLander-v2')
 
 
-class Acrobot(DiscreteConfig):
+class CartPole(GymDiscreteConfig):
     def __init__(self):
-        super().__init__(
-            gym_env_string='Acrobot-v1',
-            step_coder=StepCoder(observation_coder=NumpyCoder(1, np.float64)),
-            action_map=[0, 1, 2]
-        )
-        self.features = 6
-        self.hidden = 8
-        self.adversarial = False
-        self.players = 1
+        super().__init__('CartPole-v0')
+
+
+class Acrobot(GymDiscreteConfig):
+    def __init__(self):
+        super().__init__('Acrobot-v1')
 
 
 class MountainCar(DiscreteConfig):
@@ -284,12 +283,11 @@ class MountainCar(DiscreteConfig):
         env = gym.make(gym_string)
         dtype = env.reset().dtype
         super().__init__(
+            features=env.observation_space.shape[0],
+            features_dtype=dtype,
             gym_env_string=gym_string,
-            step_coder=StepCoder(observation_coder=NumpyCoder(1, dtype)),
             action_map=[n for n in range(env.action_space.n)]
         )
-
-        self.features = env.observation_space.shape[0]
         self.hidden = 8
         self.adversarial = False
         self.players = 1
@@ -388,3 +386,6 @@ class Bouncer:
             return torch.from_numpy(observation).float().unsqueeze(0)
         else:
             return torch.from_numpy(observation).float()
+
+
+default = CartPole()

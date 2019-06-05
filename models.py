@@ -1,37 +1,72 @@
 import torch
 from torch import nn
 from torch.nn import functional as NN
+from torch.distributions import *
 import copy
 import logging
 from messages import ModuleHandler
 
+# class MultiPolicyNet(nn.Module):
+#     def __init__(self, features, action_map, hidden=200):
+#         super().__init__()
+#         self.features = features
+#         self.action_map = torch.tensor(action_map)
+#         self.actions = len(action_map)
+#
+#         self.l1 = nn.Linear(features, hidden)
+#         self.l2 = nn.Linear(hidden, self.actions)
+#
+#     def forward(self, observation):
+#         hidden = torch.selu(self.l1(observation))
+#         hidden = self.l2(hidden)
+#         return NN.log_softmax(hidden, dim=1)
+#
+#     def sample(self, action_prob):
+#         index = torch.distributions.Categorical(logits=action_prob).sample()
+#         action_map = self.action_map.expand(index.size(0), -1)
+#         gym_action = action_map.take(index)
+#         return index, gym_action
+#
+#     def max_action(self, action_logprob):
+#         probs = torch.exp(action_logprob)
+#         index = torch.argmax(probs, dim=1)
+#         gym_action = self.action_map[index]
+#         return gym_action
+
+
+class DiscreteActionTransform:
+    def __init__(self, action_map):
+        self.action_map = torch.tensor(action_map)
+
+    def __call__(self, index):
+        action_map = self.action_map.expand(index.size(0), -1)
+        action = action_map.take(index)
+        return action.squeeze().item()
+
 
 class MultiPolicyNet(nn.Module):
-    def __init__(self, features, action_map, hidden=200):
+    def __init__(self, features, actions, hidden=200):
         super().__init__()
         self.features = features
-        self.action_map = torch.tensor(action_map)
-        self.actions = len(action_map)
+        self.actions = actions
 
         self.l1 = nn.Linear(features, hidden)
-        self.l2 = nn.Linear(hidden, self.actions)
+        self.l2 = nn.Linear(hidden, actions)
 
     def forward(self, observation):
         hidden = torch.selu(self.l1(observation))
         hidden = self.l2(hidden)
-        return NN.log_softmax(hidden, dim=1)
+        logprobs = NN.log_softmax(hidden, dim=1)
+        return Categorical(logits=logprobs)
 
-    def sample(self, action_prob):
-        index = torch.distributions.Categorical(logits=action_prob).sample()
-        action_map = self.action_map.expand(index.size(0), -1)
-        gym_action = action_map.take(index)
-        return index, gym_action
+    # def sample(self, action_prob):
+    #     index = torch.distributions.Categorical(logits=action_prob).sample()
+    #     return index
 
     def max_action(self, action_logprob):
         probs = torch.exp(action_logprob)
         index = torch.argmax(probs, dim=1)
-        gym_action = self.action_map[index]
-        return gym_action
+        return index
 
 
 class ExplodedGradient(Exception):
@@ -60,10 +95,11 @@ class MultiPolicyNetContinuous(nn.Module):
         mu, sigma = torch.split(action, self.actions, dim=1)
         mu = torch.tanh(mu)
         sigma = (torch.sigmoid(sigma) * self.scale) + self.min_sigma
-        return mu, sigma
 
-    def sample(self, mu, sigma):
-        return torch.distributions.Normal(mu, sigma).sample()
+        return Normal(mu, sigma)
+
+    # def sample(self, mu, sigma):
+    #     return torch.distributions.Normal(mu, sigma).sample()
 
     def max_action(self, mu, sigma):
         return mu
@@ -89,10 +125,10 @@ class MultiPolicyNetContinuousV2(nn.Module):
 
         hidden_sigma = torch.selu(self.l1_sigma(observation))
         sigma = (torch.sigmoid(self.l2_sigma(hidden_sigma)) * self.scale) + self.min_sigma
-        return mu, sigma
+        return Normal(mu, sigma)
 
-    def sample(self, mu, sigma):
-        return torch.distributions.Normal(mu, sigma).sample()
+    # def sample(self, mu, sigma):
+    #     return torch.distributions.Normal(mu, sigma).sample()
 
     def max_action(self, mu, sigma):
         return mu

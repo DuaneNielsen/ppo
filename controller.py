@@ -44,9 +44,10 @@ if __name__ == '__main__':
     '''
     Logging is controlled from here
     '''
-    logging.basicConfig(format='%(levelname)s-%(module)s-%(message)s', level=logging.INFO)
+    logging.basicConfig(format='%(levelname)s-%(module)s-%(message)s', level=logging.DEBUG)
     logging.getLogger('peewee').setLevel(logging.INFO)
     logging.getLogger('coordinator').setLevel(logging.INFO)
+    logging.getLogger('server').setLevel(logging.DEBUG)
     logging.info(args)
 
     if args.trainer:

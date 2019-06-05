@@ -4,6 +4,7 @@ import pickle
 import json
 import copy
 import random
+import torch
 
 policy_db_proxy = Proxy()
 
@@ -19,6 +20,7 @@ class PickleField(BlobField):
 
 import numpy as np
 
+
 class ConfigField(JSONField):
     field_type = 'json'
 
@@ -32,7 +34,7 @@ class ConfigField(JSONField):
             guide = copy.copy(vars(value))
 
         for name, item in guide.items():
-            if callable(item) or isinstance(item, type):
+            if callable(item) or isinstance(item, type) or isinstance(item, torch.Tensor):
                 del attribs[name]
 
         if 'step_coder' in attribs:
@@ -40,6 +42,9 @@ class ConfigField(JSONField):
 
         if 'model' in attribs:
             del attribs['model']
+
+        if 'default_action' in attribs:
+            del attribs['default_action']
 
         encoded = json.dumps(attribs)
         return encoded
@@ -181,7 +186,11 @@ class PolicyDB:
         return [record.run for record in PolicyStore.select(PolicyStore.run).where(PolicyStore.config['gym_env_string'] == env_string).distinct()]
 
     def latest_run(self):
-        return PolicyStore.select(PolicyStore).order_by(-PolicyStore.timestamp).get()
+        try:
+            record = PolicyStore.select(PolicyStore).order_by(-PolicyStore.timestamp).get()
+        except PolicyStore.DoesNotExist:
+            return None
+        return record
 
     def set_state_latest(self, state):
         latest = self.latest_run()

@@ -5,7 +5,7 @@ import gym
 from services.server import Server
 from data import Db
 from messages import RolloutMessage, EpisodeMessage
-from rollout import single_episode, single_episode_continous
+from rollout import single_episode
 
 logger = logging.getLogger(__name__)
 
@@ -31,10 +31,7 @@ class Gatherer(Server):
 
         while self.exp_buffer.rollout_seq.current() == msg.rollout_id and len(rollout) < msg.config.num_steps_per_rollout:
             logger.info(f'starting episode {episode_number} of {msg.config.gym_env_string}')
-            if msg.config.continuous:
-                episode = single_episode_continous(env, msg.config, policy, rollout)
-            else:
-                episode = single_episode(env, msg.config, policy, rollout)
+            episode = single_episode(env, msg.config, policy, rollout)
             EpisodeMessage(self.id, msg.run, episode_number, len(episode), episode.total_reward(),
                            msg.config.num_steps_per_rollout).send(self.redis)
             episode_number += 1

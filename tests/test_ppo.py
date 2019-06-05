@@ -5,7 +5,7 @@ from ppo_clip_discrete import train_policy, train_ppo_continuous
 import gym
 import roboschool
 from util import UniImageViewer, timeit
-from rollout import single_episode, single_episode_continous
+from rollout import single_episode
 from data import Db
 from statistics import mean
 
@@ -27,11 +27,7 @@ def rollout_policy(num_episodes, policy, config, capsys=None, redis_host='localh
 
     for i in range(num_episodes):
 
-        if config.continuous:
-            episode = single_episode_continous(env, config, policy, rollout)
-        else:
-            episode = single_episode(env, config, policy, rollout)
-
+        episode = single_episode(env, config, policy, rollout)
         rewards.append(episode.total_reward())
 
     rollout.finalize()
@@ -42,7 +38,8 @@ def rollout_policy(num_episodes, policy, config, capsys=None, redis_host='localh
 def test_ppo_clip_discrete():
 
     config = configs.LunarLander()
-    policy_net = PPOWrap(config.features, config.action_map, config.hidden)
+    model = config.model.get_model()
+    policy_net = PPOWrapModel(model)
 
     for epoch in range(3):
 
@@ -62,4 +59,4 @@ def test_ppo_clip_continuous(capsys):
 
         rollout = rollout_policy(10, policy_net, config, capsys)
         dataset = RolloutDatasetBase(config, rollout)
-        train_ppo_continuous(policy_net, dataset, config)
+        train_policy(policy_net, dataset, config)

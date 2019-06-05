@@ -1,18 +1,22 @@
 import jsonpickle
 import pickle
 import base64
+import torch
 
 
 class ModuleHandler(jsonpickle.handlers.BaseHandler):
     def flatten(self, obj, data):
         env_pickle = pickle.dumps(obj, 0)
-        data['model_bytes'] = base64.b64encode(env_pickle).decode()
+        data['ModuleHander_bytestring'] = base64.b64encode(env_pickle).decode()
         return data
 
     def restore(self, data):
-        encoded = data['model_bytes']
+        encoded = data['ModuleHander_bytestring']
         decoded = base64.b64decode(encoded)
         return pickle.loads(decoded)
+
+
+ModuleHandler.handles(torch.Tensor)
 
 
 class JSONPickleCoder:

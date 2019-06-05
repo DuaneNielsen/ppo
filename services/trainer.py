@@ -22,10 +22,7 @@ class Trainer(Server):
         policy = msg.policy
 
         logger.info('started training')
-        if msg.config.continuous:
-            train_ppo_continuous(policy, dataset, msg.config)
-        else:
-            train_policy(policy, dataset, msg.config)
+        train_policy(policy, dataset, msg.config)
 
         logging.info('training complete')
         TrainCompleteMessage(self.id, policy, msg.config).send(self.r)

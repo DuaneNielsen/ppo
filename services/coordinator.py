@@ -5,6 +5,7 @@ from messages import *
 from models import *
 from policy_db import PolicyDB, PolicyStore
 import time
+import configs
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ class Coordinator(Server):
         self.handler.register(EpisodeMessage, self.handle_episode)
         self.handler.register(TrainCompleteMessage, self.handle_train_complete)
         self.handler.register(ConfigUpdateMessage, self.handle_config_update)
-        self.config = None
+        self.config = configs.default
         self.policy = None
         self.state = STOPPED
         self.resume(self.db)
@@ -46,35 +47,24 @@ class Coordinator(Server):
 
     def resume(self, db):
         record = db.latest_run()
-        logger.info(f'resuming run {record.run} state f{record.run_state}')
-        self.state = record.run_state
-        self.config = record.config_b
+        if record is not None:
+            logger.info(f'resuming run {record.run} state f{record.run_state}')
+            self.state = record.run_state
+            self.config = record.config_b
 
-        self.exp_buffer.clear_rollouts()
-        rollout = self.exp_buffer.create_rollout(self.config)
-        self.policy = self.init_policy(self.config)
-        self.policy.load_state_dict(record.policy)
+            self.exp_buffer.clear_rollouts()
+            rollout = self.exp_buffer.create_rollout(self.config)
+            self.policy = self.init_policy(self.config)
+            self.policy.load_state_dict(record.policy)
 
-        if self.state != STOPPED:
-            self.state = GATHERING
-            RolloutMessage(self.id, self.config.run_id, rollout.id, self.policy, self.config, self.config.episodes_per_gatherer).send(
-                self.r)
+            if self.state != STOPPED:
+                self.state = GATHERING
+                RolloutMessage(self.id, self.config.run_id, rollout.id, self.policy, self.config, self.config.episodes_per_gatherer).send(
+                    self.r)
 
     def init_policy(self, config):
-        if hasattr(config, 'continuous') and config.continuous:
-            if config.model.name == 'MultiPolicyNet':
-                model = MultiPolicyNetContinuous(config.model.features_size, config.model.action_size,
-                                                 config.model.hidden_size)
-            elif config.model.name == 'MultiPolicyNetContinuousV2':
-                model = MultiPolicyNetContinuousV2(config.model.features_size, config.model.action_size,
-                                                   config.model.hidden_size)
-            else:
-                raise ModelNotFoundException
-
-            policy = PPOWrapModel(model)
-        else:
-            policy = PPOWrap(config.features, config.action_map, config.hidden)
-
+        model = config.model.get_model()
+        policy = PPOWrapModel(model)
         return policy
 
     def handle_start(self, msg):
