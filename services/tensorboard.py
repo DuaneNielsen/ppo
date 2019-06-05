@@ -46,7 +46,6 @@ class TensorBoardCleaner(multiprocessing.Process):
 
         # cleanup the run directory
         for parent, file in dirs_to_delete.items():
-            logger.debug(file.parent, file.name, file.stat().st_size)
             try:
                 shutil.rmtree(str(file))
             except:
@@ -160,3 +159,5 @@ class TensorBoardListener(Server):
         tb_step = self.tb_step.increment(msg.run)
         self.tb.add_scalar('reward', msg.total_reward, tb_step)
         self.tb.add_scalar('epi_len', msg.steps, tb_step)
+        for name, value in msg.monitor.items():
+            self.tb.add_scalar(name, value, tb_step)

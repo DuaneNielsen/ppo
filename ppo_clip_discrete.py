@@ -39,7 +39,7 @@ def ppo_loss_log(newlogprob, oldlogprob, advantage, clip=0.2):
     log_ratio = (newlogprob - oldlogprob)
     # clamp the log to stop infinities (85 is for 32 bit floats)
     # todo test what happens if we remove the clamp
-    log_ratio.clamp_(min=-2.0, max=2.0)
+    #log_ratio.clamp_(min=-2.0, max=2.0)
     ratio = torch.exp(log_ratio)
 
     clipped_ratio = ratio.clamp(1.0 - clip, 1.0 + clip)
@@ -81,7 +81,7 @@ def train_policy(policy, rollout_dataset, config, device='cpu'):
         batches_p += 1
         for step in range(config.ppo_steps_per_batch):
 
-            #todo catergorical distrubution is super slow (pytorch problem)
+            #todo catergorical distrubution loss.backward() super slow (pytorch problem)
 
             observation = observation.to(device)
             advantage = advantage.float().to(device)

@@ -3,6 +3,7 @@ import roboschool
 import torch
 
 from data import Db, Step
+from statistics import mean
 from util import timeit, UniImageViewer
 
 
@@ -96,11 +97,15 @@ def single_episode(env, config, policy, rollout=None, v=None, render=False, disp
     observation = config.prepro(observation_t1, observation_t0)
     observation_t0 = observation_t1
 
+    entropy = []
+
     done = False
     while not done:
         # take an action on current observation and record result
         observation_tensor = config.transform(observation, insert_batch=True)
         action_dist = policy(observation_tensor)
+
+        entropy.append(action_dist.entropy().mean().item())
 
         # if type(action_dist) is tuple:
         #     action = policy.sample(*action_dist)
@@ -127,4 +132,5 @@ def single_episode(env, config, policy, rollout=None, v=None, render=False, disp
 
     if episode is not None:
         episode.end()
+        episode.entropy = mean(entropy)
     return episode

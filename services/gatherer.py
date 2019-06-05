@@ -22,16 +22,18 @@ class Gatherer(Server):
         logger.info('Init Complete')
 
     def rollout(self, msg):
-
         logger.debug(f'gathering for rollout: {msg.rollout_id}')
         policy = msg.policy.to('cpu').eval()
         env = gym.make(msg.config.gym_env_string)
         rollout = self.exp_buffer.rollout(msg.rollout_id, msg.config)
         episode_number = 0
 
-        while self.exp_buffer.rollout_seq.current() == msg.rollout_id and len(rollout) < msg.config.num_steps_per_rollout:
+        while self.exp_buffer.rollout_seq.current() == msg.rollout_id and len(
+                rollout) < msg.config.num_steps_per_rollout:
             logger.info(f'starting episode {episode_number} of {msg.config.gym_env_string}')
             episode = single_episode(env, msg.config, policy, rollout)
-            EpisodeMessage(self.id, msg.run, episode_number, len(episode), episode.total_reward(),
-                           msg.config.num_steps_per_rollout).send(self.redis)
+            epi_mess = EpisodeMessage(self.id, msg.run, episode_number, len(episode), episode.total_reward(),
+                                      msg.config.num_steps_per_rollout)
+            epi_mess.monitor['entropy'] = episode.entropy
+            epi_mess.send(self.r)
             episode_number += 1
