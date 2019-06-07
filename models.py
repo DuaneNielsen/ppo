@@ -3,7 +3,6 @@ from torch import nn
 from torch.nn import functional as NN
 from torch.distributions import *
 import copy
-import logging
 from messages import ModuleHandler
 
 # class MultiPolicyNet(nn.Module):
@@ -32,16 +31,6 @@ from messages import ModuleHandler
 #         index = torch.argmax(probs, dim=1)
 #         gym_action = self.action_map[index]
 #         return gym_action
-
-
-class DiscreteActionTransform:
-    def __init__(self, action_map):
-        self.action_map = torch.tensor(action_map)
-
-    def __call__(self, index):
-        action_map = self.action_map.expand(index.size(0), -1)
-        action = action_map.take(index)
-        return action.squeeze().item()
 
 
 class MultiPolicyNet(nn.Module):

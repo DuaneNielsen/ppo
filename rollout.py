@@ -92,9 +92,9 @@ def single_episode(env, config, policy, rollout=None, v=None, render=False, disp
         episode = rollout.create_episode()
     episode_length = 0
     observation_t0 = env.reset()
-    action = config.action_transform(config.default_action)
+    action = config.default_action
     observation_t1, reward, done, info = env.step(action)
-    observation = config.prepro(observation_t1, observation_t0)
+    state = config.prepro(observation_t1, observation_t0)
     observation_t0 = observation_t1
 
     entropy = []
@@ -102,8 +102,8 @@ def single_episode(env, config, policy, rollout=None, v=None, render=False, disp
     done = False
     while not done:
         # take an action on current observation and record result
-        observation_tensor = config.transform(observation, insert_batch=True)
-        action_dist = policy(observation_tensor)
+        state_t = config.transform(state, insert_batch=True)
+        action_dist = policy(state_t)
 
         entropy.append(action_dist.entropy().mean().item())
 
@@ -112,25 +112,25 @@ def single_episode(env, config, policy, rollout=None, v=None, render=False, disp
         # else:
         #     action = policy.sample(action_dist)
 
-        action = action_dist.sample()
+        action = config.action_transform(action_dist.sample())
 
-        observation_t1, reward, done, info = env.step(config.action_transform(action))
+        observation_t1, reward, done, info = env.step(action)
 
         done = done or episode_length > config.max_rollout_len
 
         if episode is not None:
-            episode.append(Step(observation, action, reward, False), config.episode_batch_size)
+            episode.append(Step(state, action, reward, False), config.episode_batch_size)
 
         # compute the observation that resulted from our action
-        observation = config.prepro(observation_t1, observation_t0)
+        state = config.prepro(observation_t1, observation_t0)
         observation_t0 = observation_t1
 
         if render:
             env.render(mode='human')
         if display_observation:
-            v.render(observation)
+            v.render(state)
 
-    episode.append(Step(observation, config.default_action, 0.0, True))
+    episode.append(Step(state, config.default_action, 0.0, True))
 
     if episode is not None:
         episode.end()

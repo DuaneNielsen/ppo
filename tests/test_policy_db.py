@@ -1,9 +1,10 @@
 import policy_db
 import torch
 import configs
-from models import PPOWrap
+from models import PPOWrapModel
 import random
 import pytest
+
 
 def delete(db):
     db.delete('run_id')
@@ -11,6 +12,7 @@ def delete(db):
     db.delete('run2')
     db.delete('best_run')
     db.delete('delete_me')
+
 
 @pytest.fixture(scope="module")
 def db():
@@ -26,7 +28,8 @@ def testPostgresWrite(db):
     s1 = torch.randn(config.features)
     s = config.prepro(s0, s1).unsqueeze(0)
 
-    policy_net = PPOWrap(config.features, config.action_map, config.hidden)
+    model = config.model.get_model()
+    policy_net = PPOWrapModel(model)
 
     a0 = policy_net(s)
 
@@ -47,14 +50,14 @@ def testPostgresWrite(db):
 
     assert record.run == run
     assert record.stats == stats
-    assert torch.equal(a0, a1)
-    assert record.config['gym_env_string'] == config.gym_env_string
+    assert a0.entropy() == a1.entropy()
     assert record.config_b.gym_env_string == config.gym_env_string
 
 
 def write_policy(db, run, reward):
     config = configs.LunarLander()
-    policy_net = PPOWrap(config.features, config.action_map, config.hidden)
+    model = config.model.get_model()
+    policy_net = PPOWrapModel(model)
     policy_state_dict = policy_net.state_dict()
     run_state = 'RUNNING'
     stats = {'header': 'unittest', 'ave_reward_episode': reward}

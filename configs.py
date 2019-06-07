@@ -6,7 +6,7 @@ import torch
 from torchvision.transforms.functional import to_tensor
 import gym
 import data
-from data import SingleProcessDataSet, StepCoder, NumpyCoder, AdvancedStepCoder
+from data import *
 import logging
 import models
 
@@ -44,6 +44,37 @@ class ContinousActionTransform:
         if torch.isnan(action).any().item() == 1:
             raise InfinityException
         return action.numpy()
+
+    def invert(self, action):
+        return torch.from_numpy(action)
+
+
+class DiscreteActionTransform:
+    def __init__(self, action_map):
+        """
+        Takes a single action from model and converts it to an integer mapped
+        to the environments action space
+        :param action_map:
+        """
+        self.action_map = torch.tensor(action_map)
+
+        self.reverse = [0] * (max(action_map) + 1)
+
+        for i, item in enumerate(action_map):
+            self.reverse[item] = i
+
+    def __call__(self, index):
+        action_map = self.action_map.expand(index.size(0), -1)
+        action = action_map.take(index)
+        return action.squeeze().item()
+
+    def invert(self, action):
+        """
+        converts the action on the environment action space back to the model action space
+        :param action:
+        :return:
+        """
+        return torch.tensor([self.reverse[action]])
 
 
 class ModelConfig:
@@ -138,6 +169,7 @@ class BaseConfig:
         self.lr = 0.05
         self.ppo_steps_per_batch = 10
         self.entropy_bonus = 0.0
+        self._precision = "torch.float32"
 
         self.gpu_profile = False
         self.gpu_profile_fn = f'{datetime.datetime.now():%d-%b-%y-%H-%M-%S}-gpu_mem_prof.txt'
@@ -145,6 +177,10 @@ class BaseConfig:
         self.func_name = None
         self.filename = None
         self.module_name = None
+
+    @property
+    def precision(self):
+        return eval(self._precision)
 
 
 class DiscreteConfig(BaseConfig):
@@ -162,11 +198,10 @@ class DiscreteConfig(BaseConfig):
         self.features = features
         self.action_map = action_map
         self.actions = len(action_map)
-        self.default_action = torch.tensor([default_action])
+        self.default_action = default_action
         self.model = MultiPolicyNet(features, features, self.actions)
-        self.action_transform = models.DiscreteActionTransform(action_map)
-        self.step_coder = AdvancedStepCoder(state_shape=features, state_dtype=features_dtype,
-                                            action_shape=(1,), action_dtype=np.int64)
+        self.action_transform = DiscreteActionTransform(action_map)
+        self.step_coder = DiscreteStepCoder(state_shape=features, state_dtype=features_dtype)
 
 
 class ContinuousConfig(BaseConfig):
@@ -187,7 +222,7 @@ class ContinuousConfig(BaseConfig):
         self.action_space_dtype = action_space_dtype
         self.continuous = True
         self.action_transform = ContinousActionTransform()
-        self.default_action = torch.zeros(action_space_features)
+        self.default_action = np.zeros(action_space_features)
         self.step_coder = AdvancedStepCoder(state_shape=self.state_space_features, state_dtype=self.state_space_dtype,
                                             action_shape=self.action_space_features, action_dtype=self.action_space_dtype)
 
@@ -389,3 +424,5 @@ class Bouncer:
 
 
 default = CartPole()
+
+

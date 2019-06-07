@@ -1,6 +1,6 @@
 import logging
 from services.server import Server
-from data import Db, RolloutDatasetBase
+from data import Db
 from messages import TrainMessage, TrainCompleteMessage
 import algos
 

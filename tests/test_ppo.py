@@ -1,6 +1,6 @@
 from models import PPOWrap, MultiPolicyNetContinuous, PPOWrapModel
 import configs
-from data import RolloutDatasetBase
+from data import SARAdvantageDataset
 from algos import *
 import gym
 import roboschool
@@ -19,7 +19,7 @@ def rollout_policy(num_episodes, policy, config, capsys=None, redis_host='localh
 
     policy = policy.eval()
     policy = policy.to('cpu')
-    db = Db(host=redis_host, port=redis_port)
+    db = Db(host=redis_host, port=redis_port, db=1)
     rollout = db.create_rollout(config)
     v = UniImageViewer(config.gym_env_string, (200, 160))
     env = gym.make(config.gym_env_string)

@@ -69,32 +69,64 @@ class RolloutDatasetAbstract(Dataset, metaclass=ABCMeta):
         pass
 
 
-#todo deal with the sentinel
-#todo refactor advantage to be calculated during training
-class RolloutDatasetBase(RolloutDatasetAbstract):
-    def __init__(self, env_config, rollout):
-        """
+class SARDataset(Dataset):
+    def __init__(self, exp_buffer):
+        self.exp_buffer = exp_buffer
+        if not self.exp_buffer.is_finalized():
+            self.exp_buffer.finalize()
+        self.index = self.build_index()
 
-        :param discount_factor:
-        :param transform: transform to apply to observation
+    def build_index(self):
+        index = []
+        for i in range(len(self.exp_buffer)):
+            if not self.exp_buffer[i].done:
+                index.append(i)
+        return index
+
+    def __getitem__(self, item):
+        step_index = self.index[item]
+        step = self.exp_buffer[step_index]
+        return step.observation, step.action, step.reward
+
+    def __len__(self):
+        return len(self.index)
+
+
+class SARAdvantageDataset(Dataset):
+    def __init__(self, exp_buffer, state_transform, action_transform, discount_factor=0.99, precision=torch.float32):
         """
-        super().__init__()
-        self.rollout = rollout
-        self.rollout.finalize()
-        self.adv = [0.0 for _ in range(len(rollout))]
-        self.start = 0
-        self.discount_factor = env_config.discount_factor
-        self.transform = env_config.transform
+        Returns S0, A0, R1, Advantage1
+        Advantage is normalized discounted returns
+        Note: we removes the terminal states from the calculation, but the terminal reward is still considered..
+        ie: S0 + A0 => R1, S1 + A1 => R2
+        :param exp_buffer:
+        :param discount_factor:
+        """
+        self.exp_buffer = exp_buffer
+        self.discount_factor = discount_factor
+        self.state_transform = state_transform
+        self.action_transform = action_transform
+        self.precision = precision
+
+        if not self.exp_buffer.is_finalized():
+            self.exp_buffer.finalize()
+
+        self.adv = [0.0 for _ in range(len(exp_buffer))]
 
         try:
             # calculate advantage values
-            for episode in rollout:
+            for episode in self.exp_buffer:
                 self.advantage(episode)
-            self.normalize()
         except Exception as e:
             logger.error(e)
             logger.error('exception while computing advantage')
             raise e
+
+        self.index = self.build_index()
+
+        self.adv = [self.adv[index] for index in self.index]
+
+        self.normalize()
 
     def normalize(self):
         mean = statistics.mean(self.adv)
@@ -104,33 +136,38 @@ class RolloutDatasetBase(RolloutDatasetAbstract):
     def advantage(self, episode):
 
         cum_value = 0.0
-        offset = self.rollout.offset(episode)
+        offset = self.exp_buffer.offset(episode)
 
         for step in reversed(range(offset, offset + len(episode))):
-            cum_value = self.rollout[step].reward + cum_value * self.discount_factor
+            cum_value = self.exp_buffer[step].reward + cum_value * self.discount_factor
             self.adv[step] = cum_value
 
-    def total_reward(self):
-        reward = 0.0
-        for episode in self.rollout:
-            for step in episode:
-                reward += step.reward
-        return reward
+    def build_index(self):
+        index = []
+        for i in range(len(self.exp_buffer)):
+            if not self.exp_buffer[i].done:
+                index.append(i)
+        return index
 
     def __getitem__(self, item):
-        step = self.rollout[item]
-        advantage = self.adv[item]
-        #todo shouldn't do this here, should be done in the training algo, datasset should just return numpy arrays
-        t_obs = self.transform(step.observation)
-        return t_obs, step.action, step.reward, advantage
+        step_index = self.index[item]
+        step = self.exp_buffer[step_index]
+        state = self.state_transform(step.observation)
+        action = self.action_transform.invert(step.action)
+        reward = torch.tensor(step.reward, dtype=self.precision)
+        advantage = torch.tensor(self.adv[item], dtype=self.precision)
+        return state, action, reward, advantage
 
     def __len__(self):
-        return len(self.rollout)
+        return len(self.index)
 
 
 class SARSDataset(Dataset):
-
     def __init__(self, exp_buffer):
+        """
+        Creates a dataset that returns S0 A0 => R1 S1
+        :param exp_buffer: the experience buffer containing episodes
+        """
         self.exp_buffer = exp_buffer
         if not self.exp_buffer.is_finalized():
             self.exp_buffer.finalize()
@@ -501,6 +538,28 @@ class AdvancedNumpyCoder:
         return ndarray
 
 
+class DiscreteActionCoder:
+    def __init__(self):
+        self.format = '>i'
+        self.slice = None
+
+    def set_offset(self, offset):
+        """
+        sets the base address offset to read from the bytestring
+        returns the offset of the next field
+        """
+        end = offset + struct.calcsize(self.format)
+        self.slice = slice(offset, end)
+        return end
+
+    def encode(self, action):
+        return struct.pack(self.format, action)
+
+    def decode(self, encoded):
+        action = struct.unpack(self.format, encoded[self.slice])
+        return action[0]
+
+
 class RewardDoneCoder:
     def __init__(self):
         self.format = '>d?'
@@ -533,9 +592,41 @@ class AdvancedStepCoder:
         end = self.action_coder.set_offset(end)
 
     def encode(self, step):
+        """
+        Step should contain floats, ints, or numpy arrays
+        :param step:
+        :return:
+        """
         encoded = self.reward_done_coder.encode(step.reward, step.done)
         encoded += self.state_coder.encode(step.observation)
-        encoded += self.action_coder.encode(step.action.numpy())
+        encoded += self.action_coder.encode(step.action)
+        return encoded
+
+    def decode(self, encoded):
+        reward, done = self.reward_done_coder.decode(encoded)
+        state = self.state_coder.decode(encoded)
+        action = self.action_coder.decode(encoded)
+        return Step(state, action, reward, done)
+
+
+class DiscreteStepCoder:
+    def __init__(self, state_shape, state_dtype):
+        self.reward_done_coder = RewardDoneCoder()
+        end = self.reward_done_coder.set_offset(0)
+        self.state_coder = AdvancedNumpyCoder(shape=state_shape, dtype=state_dtype)
+        end = self.state_coder.set_offset(end)
+        self.action_coder = DiscreteActionCoder()
+        end = self.action_coder.set_offset(end)
+
+    def encode(self, step):
+        """
+        Step should contain floats, ints, or numpy arrays
+        :param step:
+        :return:
+        """
+        encoded = self.reward_done_coder.encode(step.reward, step.done)
+        encoded += self.state_coder.encode(step.observation)
+        encoded += self.action_coder.encode(step.action)
         return encoded
 
     def decode(self, encoded):

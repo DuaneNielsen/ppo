@@ -15,34 +15,44 @@ def db():
 
 
 def test_advantage(db):
-    config = configs.BaseConfig('test_data', StepCoder(observation_coder=NumpyCoder(2, dtype=np.float64)))
+    config = configs.DiscreteConfig(gym_env_string='test',
+                                    features=(80, 80),
+                                    features_dtype=np.float64,
+                                    action_map=[0, 1, 6])
+    config.discount_factor = 0.99
 
     rollout = db.create_rollout(config)
     obs = []
 
     episode = rollout.create_episode()
     o1 = np.random.rand(80, 80)
-    episode.append(data.Step(o1, 1, 0.0, False))
+    a = config.default_action
+    episode.append(data.Step(o1, a, 0.0, False))
     o2 = np.random.rand(80, 80)
-    episode.append(data.Step(o2, 1, 0.0, False))
+    episode.append(data.Step(o2, 6, 0.0, False))
     o3 = np.random.rand(80, 80)
     episode.append(data.Step(o3, 1, 1.0, False))
+    # sentinel containing last observation
+    episode.append(data.Step(o3, a, 0.0, True))
     obs.append([o1, o2, o3])
     episode.end()
 
     episode = rollout.create_episode()
     o1 = np.random.rand(80, 80)
-    episode.append(data.Step(o1, 1, 0.0, False))
+    episode.append(data.Step(o1, a, 0.0, False))
     o2 = np.random.rand(80, 80)
-    episode.append(data.Step(o2, 1, 0.0, False))
+    episode.append(data.Step(o2, a, 0.0, False))
     o3 = np.random.rand(80, 80)
-    episode.append(data.Step(o3, 1, 1.0, False))
+    episode.append(data.Step(o3, a, 1.0, False))
+    # sentinel containing last observation
+    episode.append(data.Step(o3, a, 0.0, True))
     obs.append([o1, o2, o3])
     episode.end()
 
     rollout = db.latest_rollout(config)
 
-    dataset = data.RolloutDatasetBase(config, rollout)
+    dataset = data.SARAdvantageDataset(rollout, discount_factor=0.99, state_transform=config.transform,
+                                       action_transform=config.action_transform)
 
     a = []
     a.append(1.0 * config.discount_factor ** 2)
@@ -57,17 +67,22 @@ def test_advantage(db):
 
     adv = [(vl - mu) / (sigma + 1e-12) for vl in a]
 
+    assert len(dataset) == 6
+
     observation, action, reward, advantage = dataset[0]
     assert reward == 0.00
     assert advantage == adv[0]
+    assert action == config.default_action
 
     observation, action, reward, advantage = dataset[1]
     assert reward == 0.0
     assert advantage == adv[1]
+    assert action.item() == 2
 
     observation, action, reward, advantage = dataset[2]
     assert reward == 1.0
     assert advantage == adv[2]
+    assert action.item() == 1
 
     observation, action, reward, advantage = dataset[3]
     assert reward == 0.00
@@ -83,44 +98,57 @@ def test_advantage(db):
 
 
 def test_concurrency(db):
-    config = configs.BaseConfig('test_data', StepCoder(observation_coder=NumpyCoder(2, dtype=np.float64)))
+    config = configs.DiscreteConfig(gym_env_string='test',
+                                    features=(80, 80),
+                                    features_dtype=np.float64,
+                                    action_map=[0, 1])
 
     rollout = db.create_rollout(config)
     obs = []
 
     episode = rollout.create_episode()
     o1 = np.random.rand(80, 80)
-    episode.append(data.Step(o1, 1, 0.0, False))
+    a = config.default_action
+    episode.append(data.Step(o1, a, 0.0, False))
     o2 = np.random.rand(80, 80)
-    episode.append(data.Step(o2, 1, 0.0, False))
+    episode.append(data.Step(o2, a, 0.0, False))
     o3 = np.random.rand(80, 80)
-    episode.append(data.Step(o3, 1, 1.0, False))
+    episode.append(data.Step(o3, a, 1.0, False))
+    # sentinel containing last observation
+    episode.append(data.Step(o3, a, 0.0, True))
     obs.append([o1, o2, o3])
     episode.end()
 
     episode = rollout.create_episode()
     o1 = np.random.rand(80, 80)
-    episode.append(data.Step(o1, 1, 0.0, False))
+    episode.append(data.Step(o1, a, 0.0, False))
     o2 = np.random.rand(80, 80)
-    episode.append(data.Step(o2, 1, 0.0, False))
+    episode.append(data.Step(o2, a, 0.0, False))
     o3 = np.random.rand(80, 80)
-    episode.append(data.Step(o3, 1, 1.0, False))
+    episode.append(data.Step(o3, a, 1.0, False))
+    # sentinel containing last observation
+    episode.append(data.Step(o3, a, 0.0, True))
     obs.append([o1, o2, o3])
     episode.end()
+
 
     rollout = db.latest_rollout(config)
 
-    dataset = data.RolloutDatasetBase(config, rollout)
+    dataset = data.SARAdvantageDataset(rollout, discount_factor=0.99, state_transform=config.transform,
+                                       action_transform=config.action_transform)
 
     episode = rollout.create_episode()
     o1 = np.random.rand(80, 80)
-    episode.append(data.Step(o1, 1, 0.0, False))
+    episode.append(data.Step(o1, a, 0.0, False))
     o2 = np.random.rand(80, 80)
-    episode.append(data.Step(o2, 1, 0.0, False))
+    episode.append(data.Step(o2, a, 0.0, False))
     o3 = np.random.rand(80, 80)
-    episode.append(data.Step(o3, 1, 1.0, False))
+    episode.append(data.Step(o3, a, 1.0, False))
+    # sentinel containing last observation
+    episode.append(data.Step(o3, a, 0.0, True))
     obs.append([o1, o2, o3])
     episode.end()
+
 
     loader = DataLoader(dataset, batch_size=65, shuffle=True)
 
@@ -131,12 +159,13 @@ def test_concurrency(db):
 def add_episode(exp_buffer):
 
     episode = exp_buffer.create_episode()
+    a = 0
     o1 = np.random.rand(80, 80)
-    episode.append(data.Step(o1, torch.tensor([1]), 0.0, False))
+    episode.append(data.Step(o1, 0, 0.0, False))
     o2 = np.random.rand(80, 80)
-    episode.append(data.Step(o2, torch.tensor([1]), 0.0, False))
+    episode.append(data.Step(o2, 0, 0.0, False))
     o3 = np.random.rand(80, 80)
-    episode.append(data.Step(o3, torch.tensor([1]), 0.0, True))
+    episode.append(data.Step(o3, 0, 0.0, True))
     episode.end()
 
 
@@ -161,7 +190,7 @@ def test_SARS_dataset(db):
 def add_dud_episode(exp_buffer):
     episode = exp_buffer.create_episode()
     o1 = np.random.rand(80, 80)
-    episode.append(data.Step(o1, torch.tensor([1]), 0.0, True))
+    episode.append(data.Step(o1, 0, 0.0, True))
     episode.end()
 
 

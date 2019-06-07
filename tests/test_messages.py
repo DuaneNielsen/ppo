@@ -36,6 +36,7 @@ def test_start_message(uid, config):
     assert msg.header == decoded_msg.header
     assert msg.server_uuid == decoded_msg.server_uuid
     assert msg.config.gym_env_string ==  decoded_msg.config.gym_env_string
+    assert msg.config.model_precision == decoded_msg.config.model_precision
 
 
 def test_config_update_message(uid, config):

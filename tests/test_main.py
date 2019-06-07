@@ -3,7 +3,7 @@ import numpy as np
 import configs
 import pytest
 from statistics import mean, stdev
-from data import StepCoder, NumpyCoder, RedisSequence, AdvancedNumpyCoder, AdvancedStepCoder, RewardDoneCoder, Step
+from data import *
 import threading
 import time
 import random
@@ -200,6 +200,29 @@ def test_advanced_stepcoder():
     step_d = coder.decode(encoded)
     np.testing.assert_array_equal(step_d.observation, step.observation)
     np.testing.assert_array_equal(step_d.action, step.action)
+    assert step.reward == step_d.reward
+    assert step.done == step_d.done
+
+
+def test_discrete_actioncoder():
+    coder = DiscreteActionCoder()
+    coder.set_offset(0)
+    encoded = coder.encode(1)
+    action = coder.decode(encoded)
+    assert action == 1
+
+
+def test_discrete_stepcoder():
+    coder = DiscreteStepCoder(state_shape=(24,), state_dtype=np.float32)
+    state = np.random.rand(24).astype(dtype=np.float32)
+    action = 3
+    reward = 4.5
+    done = True
+    step = Step(state, action, reward, done)
+    encoded = coder.encode(step)
+    step_d = coder.decode(encoded)
+    np.testing.assert_array_equal(step_d.observation, step.observation)
+    assert step.action == 3
     assert step.reward == step_d.reward
     assert step.done == step_d.done
 

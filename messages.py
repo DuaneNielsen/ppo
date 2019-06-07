@@ -19,6 +19,18 @@ class ModuleHandler(jsonpickle.handlers.BaseHandler):
 ModuleHandler.handles(torch.Tensor)
 
 
+class TorchTypeHandler(jsonpickle.handlers.BaseHandler):
+    def flatten(self, obj, data):
+        data['TorchTypeHandler'] = str(obj)
+        return data
+
+    def restore(self, data):
+        return eval(data['TorchTypeHandler'])
+
+
+TorchTypeHandler.handles(torch.dtype)
+
+
 class JSONPickleCoder:
     @staticmethod
     def encode(msg):

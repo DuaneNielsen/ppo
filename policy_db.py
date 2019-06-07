@@ -18,40 +18,6 @@ class PickleField(BlobField):
     def python_value(self, value):
         return pickle.loads(value)
 
-import numpy as np
-
-
-class ConfigField(JSONField):
-    field_type = 'json'
-
-    def db_value(self, value):
-
-        if isinstance(value, dict):
-            attribs = copy.copy(value)
-            guide = copy.copy(value)
-        else:
-            attribs = copy.copy(vars(value))
-            guide = copy.copy(vars(value))
-
-        for name, item in guide.items():
-            if callable(item) or isinstance(item, type) or isinstance(item, torch.Tensor):
-                del attribs[name]
-
-        if 'step_coder' in attribs:
-            del attribs['step_coder']
-
-        if 'model' in attribs:
-            del attribs['model']
-
-        if 'default_action' in attribs:
-            del attribs['default_action']
-
-        encoded = json.dumps(attribs)
-        return encoded
-
-    def python_value(self, value):
-        return value
-
 
 class PolicyBaseModel(Model):
     """A base model that will use our Postgresql database"""
@@ -64,13 +30,13 @@ class PolicyStore(PolicyBaseModel):
     run = CharField()
     run_state = CharField()
     timestamp = TimestampField(resolution=10 ** 6)
+    env_string = CharField()
     iteration = IntegerField()
     reservoir = BooleanField(default=False)
     best = BooleanField(default=False)
     stats = JSONField()
     policy = PickleField()
     config_b = PickleField()
-    config = ConfigField()
 
 
 class PolicyDB:
@@ -91,10 +57,10 @@ class PolicyDB:
     def write_policy(self, run, run_state, policy_state_dict, stats, config):
         row = PolicyStore()
         row.run = run
+        row.env_string = config.gym_env_string
         row.run_state = run_state
         row.iteration = self.calc_next_iteration(run)
         row.stats = stats
-        row.config = config
         row.config_b = config
         row.timestamp = datetime.now()
         row.policy = policy_state_dict
@@ -111,12 +77,12 @@ class PolicyDB:
 
     def get_best(self, env_string=None, run=None):
         if env_string is not None and run is not None:
-            return PolicyStore.select().where((PolicyStore.config['gym_env_string'] == env_string) &
+            return PolicyStore.select().where((PolicyStore.env_string == env_string) &
                                               (PolicyStore.run == run)). \
                 order_by(PolicyStore.stats['ave_reward_episode'])
 
         if env_string is not None and run is None:
-            return PolicyStore.select().where(PolicyStore.config['gym_env_string'] == env_string). \
+            return PolicyStore.select().where(PolicyStore.env_string == env_string). \
                 order_by(PolicyStore.stats['ave_reward_episode'])
 
         if env_string is None and run is not None:
@@ -183,7 +149,7 @@ class PolicyDB:
         return [record.run for record in PolicyStore.select(PolicyStore.run).distinct()]
 
     def runs_for_env(self, env_string):
-        return [record.run for record in PolicyStore.select(PolicyStore.run).where(PolicyStore.config['gym_env_string'] == env_string).distinct()]
+        return [record.run for record in PolicyStore.select(PolicyStore.run).where(PolicyStore.env_string == env_string).distinct()]
 
     def latest_run(self):
         try:

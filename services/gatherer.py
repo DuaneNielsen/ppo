@@ -32,8 +32,10 @@ class Gatherer(Server):
                 rollout) < msg.config.num_steps_per_rollout:
             logger.info(f'starting episode {episode_number} of {msg.config.gym_env_string}')
             episode = single_episode(env, msg.config, policy, rollout)
+
             epi_mess = EpisodeMessage(self.id, msg.run, episode_number, len(episode), episode.total_reward(),
                                       msg.config.num_steps_per_rollout)
             epi_mess.monitor['entropy'] = episode.entropy
             epi_mess.send(self.r)
+
             episode_number += 1

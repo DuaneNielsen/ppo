@@ -5,6 +5,7 @@ os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 os.environ['GPU_DEBUG'] = '0'
 
 import torch
+from torch import tensor
 from torch.utils.data import DataLoader
 import logging
 gpu_profile = False
@@ -15,7 +16,7 @@ if gpu_profile:
 
 logger = logging.getLogger(__name__)
 from time import time
-from data import RolloutDatasetBase
+from data import *
 
 def ppo_loss(newprob, oldprob, advantage, clip=0.2):
     ratio = newprob / oldprob
@@ -39,7 +40,7 @@ def ppo_loss(newprob, oldprob, advantage, clip=0.2):
 def ppo_loss_log(newlogprob, oldlogprob, advantage, clip=0.2):
     log_ratio = (newlogprob - oldlogprob)
     # clamp the log to stop infinities (85 is for 32 bit floats)
-    log_ratio.clamp_(min=-80.0, max=80.0)
+    log_ratio.clamp_(min=-10.0, max=10.0)
     ratio = torch.exp(log_ratio)
 
     clipped_ratio = ratio.clamp(1.0 - clip, 1.0 + clip)
@@ -68,7 +69,7 @@ def optimizer(config, policy):
         optim = torch.optim.Adam(lr=config.lr, params=policy.new.parameters())
 
     elif config.optimizer == 'SGD':
-        optim = torch.optim.SGD(lr=config.lr, params=policy.new.parameters())
+        optim = torch.optim.SGD(lr=config.lr, params=policy.new.parameters(), weight_decay=1e-4)
     else:
         raise NoOptimizer
 
@@ -81,22 +82,17 @@ class PurePPOClip:
         optim = optimizer(config, policy)
         policy = policy.train()
         policy = policy.to(device)
-        dataset = RolloutDatasetBase(config, exp_buffer)
-        rollout_loader = DataLoader(dataset, batch_size=len(dataset), shuffle=True)
+        dataset = SARAdvantageDataset(exp_buffer, discount_factor=config.discount_factor, state_transform=config.transform,
+                                      action_transform=config.action_transform, precision=config.precision)
+        loader = DataLoader(dataset, batch_size=len(dataset), shuffle=True)
 
         batches_p = 0
-        for i, (observation, action, reward, advantage) in enumerate(rollout_loader):
+        for observation, action, reward, advantage in loader:
             batches_p += 1
             for step in range(config.ppo_steps_per_batch):
 
                 #todo catergorical distrubution loss.backward() super slow (pytorch problem)
-
-                observation = observation.to(device)
-                advantage = advantage.float().to(device)
-                action = action.squeeze().to(device)
                 optim.zero_grad()
-
-                #logging.debug(f'ACT__ {action[0].data}')
 
                 new_dist = policy(observation)
                 new_logprob = new_dist.log_prob(action)
@@ -106,11 +102,8 @@ class PurePPOClip:
                 old_logprob = old_dist.log_prob(action)
                 policy.backup()
 
-
-
                 loss = ppo_loss_log(new_logprob, old_logprob, advantage, clip=0.2)
                 #logging.info(f'loss {loss.item()}')
-
 
                 starttime = time()
                 loss.backward()
@@ -119,10 +112,6 @@ class PurePPOClip:
                 optim.step()
 
                 logger.debug(endtime - starttime)
-
-                # updated_logprob = policy(observation.squeeze().view(-1, policy.features)).squeeze()
-                # logging.debug(f'CHNGE {(torch.exp(updated_logprob) - torch.exp(new_logprob)).data[0]}')
-                # logging.debug(f'NEW_G {torch.exp(new_logprob.grad.data[0])}')
 
         logging.info(f'processed {batches_p} batches')
         if config.gpu_profile:
@@ -135,7 +124,7 @@ class OneStepTD:
         optim = optimizer(config, policy)
         policy = policy.train()
         policy = policy.to(device)
-        dataset = RolloutDatasetBase(config, exp_buffer)
+        dataset = SARSDataset(exp_buffer)
         rollout_loader = DataLoader(dataset, batch_size=len(dataset), shuffle=True)
 
         batches_p = 0
