@@ -130,9 +130,8 @@ def single_episode(env, config, policy, rollout=None, v=None, render=False, disp
         if display_observation:
             v.render(state)
 
-    episode.append(Step(state, config.default_action, 0.0, True))
-
     if episode is not None:
+        episode.append(Step(state, config.default_action, 0.0, True))
         episode.end()
         episode.entropy = mean(entropy)
     return episode
