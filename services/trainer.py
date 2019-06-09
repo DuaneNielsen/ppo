@@ -33,7 +33,7 @@ class Trainer(Server):
         policy = msg.policy
 
         logger.info('started training')
-        trainer(policy, exp_buffer, msg.config)
+        policy = trainer(policy, exp_buffer, msg.config)
 
         logging.info('training complete')
         TrainCompleteMessage(self.id, policy, msg.config).send(self.r)

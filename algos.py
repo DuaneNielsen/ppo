@@ -17,7 +17,8 @@ if gpu_profile:
 logger = logging.getLogger(__name__)
 from time import time
 from data import *
-import models
+from models import *
+
 
 def ppo_loss(newprob, oldprob, advantage, clip=0.2):
     ratio = newprob / oldprob
@@ -65,12 +66,13 @@ def ppo_loss_log(newlogprob, oldlogprob, advantage, clip=0.2):
 class NoOptimizer(Exception):
     pass
 
-def optimizer(config, policy):
+
+def optimizer(config, parameters):
     if config.optimizer == 'Adam':
-        optim = torch.optim.Adam(lr=config.lr, params=policy.new.parameters())
+        optim = torch.optim.Adam(lr=config.lr, params=parameters)
 
     elif config.optimizer == 'SGD':
-        optim = torch.optim.SGD(lr=config.lr, params=policy.new.parameters(), weight_decay=1e-4)
+        optim = torch.optim.SGD(lr=config.lr, params=parameters, weight_decay=1e-4)
     else:
         raise NoOptimizer
 
@@ -80,7 +82,7 @@ def optimizer(config, policy):
 class PurePPOClip:
     def __call__(self, policy, exp_buffer, config, device='cpu'):
 
-        optim = optimizer(config, policy)
+        optim = optimizer(config, policy.parameters())
         policy = policy.train()
         policy = policy.to(device)
         dataset = SARAdvantageDataset(exp_buffer, discount_factor=config.discount_factor, state_transform=config.transform,
@@ -118,15 +120,21 @@ class PurePPOClip:
         if config.gpu_profile:
             gpu_profile(frame=sys._getframe(), event='line', arg=None)
 
+        return policy
+
 
 class OneStepTD:
-    def __init__(self, config):
-        self.q_f = models.QMLP(config.features, len(config.action_map), config.features + len(config.action_map))
-        self.greedy_policy = models.GreedyPolicy(self.q_f)
+    def __init__(self, q_func):
+
+        # q function
+        self.q_func = q_func
+
+        # greedy policy for the q function
+        self.greedy_policy = ValuePolicy(self.q_func, GreedyDiscreteDist)
 
     def __call__(self, policy, exp_buffer, config, device='cpu'):
 
-        optim = optimizer(config, self.q_f.parameters())
+        optim = optimizer(config, self.q_func.parameters())
         dataset = SARSDataset(exp_buffer)
         loader = DataLoader(dataset, batch_size=len(dataset), shuffle=True)
 
@@ -134,15 +142,16 @@ class OneStepTD:
 
             for state, action, reward, next_state in loader:
                 next_action = self.greedy_policy(next_state).sample()
-                target = reward + config.discount * self.q_f(next_state, next_action)
+                target = reward + config.discount * self.q_func(next_state, next_action)
 
                 optim.zero_grad()
-                predicted = self.q_f(state, action)
+                predicted = self.q_func(state, action)
                 loss = torch.mean((target - predicted)) ** 2
                 loss.backward()
                 optim.step()
 
-        return models.EpsilonGreedyPolicy(self.q_f, 0.05)
+        # return an epsilon greedy policy as actor
+        return ValuePolicy(self.q_func, EpsilonGreedyDiscreteDist, epsilon=0.05)
 
 
 # todo need to get rid of this somehow, just format the observation correctly, or use the transform from the config

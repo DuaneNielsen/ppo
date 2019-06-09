@@ -93,7 +93,7 @@ class SARDataset(Dataset):
 
 
 class SARAdvantageDataset(Dataset):
-    def __init__(self, exp_buffer, state_transform, action_transform, discount_factor=0.99, precision=torch.float32):
+    def __init__(self, exp_buffer, state_transform, action_transform, precision=torch.float32, discount_factor=0.99):
         """
         Returns S0, A0, R1, Advantage1
         Advantage is normalized discounted returns
@@ -152,8 +152,8 @@ class SARAdvantageDataset(Dataset):
     def __getitem__(self, item):
         step_index = self.index[item]
         step = self.exp_buffer[step_index]
-        state = self.state_transform(step.observation)
-        action = self.action_transform.invert(step.action)
+        state = self.state_transform(step.observation, dtype=self.precision)
+        action = self.action_transform.invert(step.action, dtype=self.precision)
         reward = torch.tensor(step.reward, dtype=self.precision)
         advantage = torch.tensor(self.adv[item], dtype=self.precision)
         return state, action, reward, advantage
@@ -163,12 +163,16 @@ class SARAdvantageDataset(Dataset):
 
 
 class SARSDataset(Dataset):
-    def __init__(self, exp_buffer):
+    def __init__(self, exp_buffer, state_transform, action_transform, precision=torch.float32):
         """
         Creates a dataset that returns S0 A0 => R1 S1
         :param exp_buffer: the experience buffer containing episodes
         """
         self.exp_buffer = exp_buffer
+        self.state_transform = state_transform
+        self.action_transform = action_transform
+        self.precision = precision
+
         if not self.exp_buffer.is_finalized():
             self.exp_buffer.finalize()
         self.index = self.build_index()
@@ -183,8 +187,12 @@ class SARSDataset(Dataset):
     def __getitem__(self, item):
         step_index = self.index[item]
         step = self.exp_buffer[step_index]
+        state = self.state_transform(step.observation, dtype=self.precision)
+        action = self.action_transform.invert(step.action, dtype=self.precision)
         next_step = self.exp_buffer[step_index + 1]
-        return step.observation, step.action, step.reward, next_step.observation
+        reward = torch.tensor(step.reward, dtype=self.precision)
+        next_state = self.state_transform(next_step.observation, dtype=self.precision)
+        return state, action, reward, next_state
 
     def __len__(self):
         return len(self.index)

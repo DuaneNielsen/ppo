@@ -45,7 +45,7 @@ def test_ppo_clip_discrete():
     for epoch in range(3):
 
         exp_buffer = rollout_policy(3, policy_net, config)
-        ppo(policy_net, exp_buffer, config)
+        policy_net = ppo(policy_net, exp_buffer, config)
         assert True
 
 
@@ -59,14 +59,17 @@ def test_ppo_clip_continuous(capsys):
     for epoch in range(3):
 
         exp_buffer = rollout_policy(10, policy_net, config, capsys)
-        ppo(policy_net, exp_buffer, config)
+        policy_net = ppo(policy_net, exp_buffer, config)
 
 
-def test_one_step_td():
+def test_one_step_td(capsys):
     config = configs.MountainCar()
-    model = config.model.get_model()
-
-    algo = OneStepTD()
+    qfunc = QMLP(config.features, config.features_dtype_torch, len(config.action_map), config.features + len(config.action_map))
+    #model = config.model.get_model()
+    one_step_td = OneStepTD(qfunc)
+    policy = ValuePolicy(qfunc, EpsilonGreedyDiscreteDist, epsilon=0.05)
 
     for epoch in range(3):
-        pass
+        exp_buffer = rollout_policy(3, policy, config, capsys)
+        policy = one_step_td(policy, exp_buffer, config)
+

@@ -62,9 +62,10 @@ class MultiPolicyNet(nn.Module):
 
 
 class QMLP(nn.Module):
-    def __init__(self, features, actions, hidden):
+    def __init__(self, features, features_dtype, actions, hidden):
         super().__init__()
         self.features = features
+        self.features_dtype = features_dtype
         self.actions = actions
 
         self.l1 = nn.Linear(features + actions, hidden)
@@ -124,35 +125,16 @@ class EpsilonGreedyDiscreteDist:
         return torch.log(self.p[0, action])
 
 
-class GreedyPolicySlow(nn.Module):
-    def __init__(self, qf):
-        super().__init__()
-        self.qf = qf
-        self.actions = torch.eye(self.qf.actions)
-
-    def forward(self, state):
-        batch_size = state.size(0)
-        states = state.unsqueeze(2).expand(-1, -1, self.qf.actions).unbind(2)
-        actions = self.actions.unsqueeze(0).expand(batch_size, -1, -1).unbind(2)
-
-        values = []
-
-        for a in range(self.qf.actions):
-            values.append(self.qf(states[a], actions[a]))
-
-        values = torch.stack(values, dim=1).squeeze(2)
-
-        probs = torch.softmax(values, dim=1)
-        return GreedyDiscreteDist(probs)
-
-
 class ValuePolicy(nn.Module):
     def __init__(self, qf, dist_class, **kwargs):
         super().__init__()
         self.qf = qf
-        self.actions = torch.eye(self.qf.actions)
+        self.actions = torch.eye(self.qf.actions, dtype=self.qf.features_dtype)
         self.dist_class = dist_class
         self.kwargs = kwargs
+
+    def parameters(self, recurse=True):
+        return self.qf.parameters(recurse)
 
     def forward(self, state):
         batch_size = state.size(0)
@@ -161,7 +143,7 @@ class ValuePolicy(nn.Module):
         # yeah, this took a bit of work to figure..
         # compute the value of all actions from a given state
 
-        states = state.unsqueeze(1).expand(-1, 4, -1)
+        states = state.unsqueeze(1).expand(-1, self.qf.actions, -1)
         states = states.reshape(batch_size * self.qf.actions, *input_size)
 
         actions = self.actions.unsqueeze(0).expand(batch_size, -1, -1)
@@ -175,6 +157,9 @@ class ValuePolicy(nn.Module):
         probs = torch.div(values, sum)
 
         return self.dist_class(probs, **self.kwargs)
+
+
+ModuleHandler.handles(ValuePolicy)
 
 
 class ExplodedGradient(Exception):
@@ -255,6 +240,9 @@ class PPOWrapModel(nn.Module):
         else:
             return self.new(input)
 
+    def parameters(self, recurse=True):
+        return self.new.parameters(recurse)
+
     def sample(self, *args):
         return self.new.sample(*args)
 
@@ -289,3 +277,97 @@ class PPOWrap(nn.Module):
 
 # make it transmittable
 ModuleHandler.handles(PPOWrap)
+
+
+class DefaultTransform:
+    def __call__(self, observation, dtype=torch.float32, insert_batch=False):
+        """
+        env -> model tensor
+        :param observation: the raw observation
+        :param insert_batch: add a batch dimension to the front
+        :return: tensor in shape (batch, dims)
+        """
+        if insert_batch:
+            return torch.from_numpy(observation).to(dtype=dtype).unsqueeze(0)
+        else:
+            return torch.from_numpy(observation).to(dtype=dtype)
+
+
+class InfinityException(Exception):
+    pass
+
+
+class ContinousActionTransform:
+    def __call__(self, action):
+        action = action.squeeze()
+        if torch.isnan(action).any().item() == 1:
+            raise InfinityException
+        return action.numpy()
+
+    def invert(self, action):
+        return torch.from_numpy(action)
+
+
+class DiscreteActionTransform:
+    def __init__(self, action_map):
+        """
+        Takes a single action from model and converts it to an integer mapped
+        to the environments action space
+        :param action_map:
+        """
+        self.action_map = torch.tensor(action_map)
+
+        self.reverse = [0] * (max(action_map) + 1)
+
+        for i, item in enumerate(action_map):
+            self.reverse[item] = i
+
+    def __call__(self, index):
+        """
+        model -> environment
+        :param index:
+        :return:
+        """
+        action_map = self.action_map.expand(index.size(0), -1)
+        action = action_map.take(index)
+        return action.squeeze().item()
+
+    def invert(self, action, dtype=None):
+        """
+        env -> model
+        converts the action on the environment action space back to the model action space
+        :param action:
+        :return:
+        """
+        return torch.tensor([self.reverse[action]])
+
+
+class OneHotDiscreteActionTransform:
+    def __init__(self, action_map):
+        self.action_map = torch.tensor(action_map)
+
+        self.reverse = [0] * (max(action_map) + 1)
+
+        for i, item in enumerate(action_map):
+            self.reverse[item] = i
+
+    def __call__(self, action):
+        """
+        model -> environment
+        :return:
+        """
+        action_map = self.action_map.expand(action.size(0), -1)
+        action = action_map.take(action)
+        return action.squeeze().item()
+
+    def invert(self, action, dtype):
+        """
+        converts one action from env -> model
+        :param action:
+        :param dtype:
+        :return:
+        """
+        one_hot = torch.zeros(self.action_map.size(0), dtype=dtype)
+        index = self.reverse[action]
+        one_hot[index] = 1.0
+        return one_hot

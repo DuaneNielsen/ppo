@@ -226,6 +226,21 @@ def test_discrete_stepcoder():
     assert step.reward == step_d.reward
     assert step.done == step_d.done
 
+def test_discrete_stepcoder_2D():
+    coder = DiscreteStepCoder(state_shape=(80,80), state_dtype=np.float64)
+    state = np.random.rand(80, 80).astype(dtype=np.float64)
+    action = 3
+    reward = 4.5
+    done = True
+    step = Step(state, action, reward, done)
+    encoded = coder.encode(step)
+    step_d = coder.decode(encoded)
+    np.testing.assert_array_equal(step_d.observation, step.observation)
+    assert step.action == 3
+    assert step.reward == step_d.reward
+    assert step.done == step_d.done
+
+
 
 def testMultiProcessRedisSquence(db):
 

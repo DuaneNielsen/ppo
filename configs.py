@@ -1,14 +1,12 @@
 import datetime
 
 import cv2
-import numpy as np
-import torch
 from torchvision.transforms.functional import to_tensor
 import gym
 import data
 from data import *
-import logging
 import models
+from models import DefaultTransform, ContinousActionTransform, DiscreteActionTransform
 
 
 def load_model(config, parameters):
@@ -19,62 +17,6 @@ def load_model(config, parameters):
 class DefaultPrePro:
     def __call__(self, observation_t1, observation_t0):
         return observation_t1 - observation_t0
-
-
-class DefaultTransform:
-    def __call__(self, observation, insert_batch=False):
-        """
-        :param observation: the raw observation
-        :param insert_batch: add a batch dimension to the front
-        :return: tensor in shape (batch, dims)
-        """
-        if insert_batch:
-            return torch.from_numpy(observation).float().unsqueeze(0)
-        else:
-            return torch.from_numpy(observation).float()
-
-
-class InfinityException(Exception):
-    pass
-
-
-class ContinousActionTransform:
-    def __call__(self, action):
-        action = action.squeeze()
-        if torch.isnan(action).any().item() == 1:
-            raise InfinityException
-        return action.numpy()
-
-    def invert(self, action):
-        return torch.from_numpy(action)
-
-
-class DiscreteActionTransform:
-    def __init__(self, action_map):
-        """
-        Takes a single action from model and converts it to an integer mapped
-        to the environments action space
-        :param action_map:
-        """
-        self.action_map = torch.tensor(action_map)
-
-        self.reverse = [0] * (max(action_map) + 1)
-
-        for i, item in enumerate(action_map):
-            self.reverse[item] = i
-
-    def __call__(self, index):
-        action_map = self.action_map.expand(index.size(0), -1)
-        action = action_map.take(index)
-        return action.squeeze().item()
-
-    def invert(self, action):
-        """
-        converts the action on the environment action space back to the model action space
-        :param action:
-        :return:
-        """
-        return torch.tensor([self.reverse[action]])
 
 
 class ModelConfig:
