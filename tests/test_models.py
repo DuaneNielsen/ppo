@@ -15,14 +15,11 @@ def test_qf():
         value = q_f(state, action)
 
         loss = torch.mean((target - value) ** 2)
-        print(loss.item())
-
         loss.backward()
         optim.step()
 
     value = q_f(state, action)
 
-    print(value)
     assert torch.allclose(target, value, atol=1e-1)
 
 
@@ -57,12 +54,23 @@ def test_epsilon_greedy_dist():
     assert gd.logprob(torch.tensor([[1]])).item() - log(0.05/3) < 1e-5
 
 
+class TestQF(nn.Module):
+    def __init__(self, actions):
+        super().__init__()
+        self.actions = actions
+
+    def forward(self, state, action):
+        value = torch.sum(state * action, dim=1)
+        return value
+
+
 def test_greedy_policy():
     state = torch.rand(2, 3)
     q_f = QMLP(features=3, actions=4, hidden=10)
     policy = ValuePolicy(q_f, GreedyDiscreteDist)
     a_dist = policy(state)
     a_dist = a_dist.sample()
+    assert True
 
 
 def test_eps_greedy_policy():
@@ -71,3 +79,21 @@ def test_eps_greedy_policy():
     policy = ValuePolicy(q_f, EpsilonGreedyDiscreteDist, epsilon=0.10)
     a_dist = policy(state)
     a_dist = a_dist.sample()
+    assert True
+
+
+def test_greedy_with_dummy():
+    state = torch.tensor([[1.0, 2.0, 3.0, 4.0], [4.0, 3.0, 2.0, 1.0]])
+    qf = TestQF(actions=4)
+    policy = ValuePolicy(qf, GreedyDiscreteDist)
+    a_dist = policy(state)
+
+    assert a_dist.probs[0, 0] == 0.1
+    assert a_dist.probs[0, 1] == 0.2
+    assert a_dist.probs[0, 2] == 0.3
+    assert a_dist.probs[0, 3] == 0.4
+
+    assert a_dist.probs[1, 0] == 0.4
+    assert a_dist.probs[1, 1] == 0.3
+    assert a_dist.probs[1, 2] == 0.2
+    assert a_dist.probs[1, 3] == 0.1

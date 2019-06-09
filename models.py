@@ -159,6 +159,7 @@ class ValuePolicy(nn.Module):
         input_size = state.shape[1:]
 
         # yeah, this took a bit of work to figure..
+        # compute the value of all actions from a given state
 
         states = state.unsqueeze(1).expand(-1, 4, -1)
         states = states.reshape(batch_size * self.qf.actions, *input_size)
@@ -169,7 +170,9 @@ class ValuePolicy(nn.Module):
         values = self.qf(states, actions)
         values = values.reshape(batch_size, self.qf.actions)
 
-        probs = torch.softmax(values, dim=1)
+        sum = torch.sum(values, dim=1)
+        sum = sum.unsqueeze(1).expand(-1, self.qf.actions)
+        probs = torch.div(values, sum)
 
         return self.dist_class(probs, **self.kwargs)
 
