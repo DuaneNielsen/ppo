@@ -17,6 +17,7 @@ if gpu_profile:
 logger = logging.getLogger(__name__)
 from time import time
 from data import *
+import models
 
 def ppo_loss(newprob, oldprob, advantage, clip=0.2):
     ratio = newprob / oldprob
@@ -119,22 +120,29 @@ class PurePPOClip:
 
 
 class OneStepTD:
+    def __init__(self, config):
+        self.q_f = models.QMLP(config.features, len(config.action_map), config.features + len(config.action_map))
+        self.greedy_policy = models.GreedyPolicy(self.q_f)
+
     def __call__(self, policy, exp_buffer, config, device='cpu'):
 
-        optim = optimizer(config, policy)
-        policy = policy.train()
-        policy = policy.to(device)
+        optim = optimizer(config, self.q_f.parameters())
         dataset = SARSDataset(exp_buffer)
-        rollout_loader = DataLoader(dataset, batch_size=len(dataset), shuffle=True)
+        loader = DataLoader(dataset, batch_size=len(dataset), shuffle=True)
 
-        batches_p = 0
-        for i, (state, action, reward, next_state) in enumerate(rollout_loader):
-            batches_p += 1
-            for step in range(config.ppo_steps_per_batch):
-                pass
+        for _ in range(100):
 
+            for state, action, reward, next_state in loader:
+                next_action = self.greedy_policy(next_state).sample()
+                target = reward + config.discount * self.q_f(next_state, next_action)
 
+                optim.zero_grad()
+                predicted = self.q_f(state, action)
+                loss = torch.mean((target - predicted)) ** 2
+                loss.backward()
+                optim.step()
 
+        return models.EpsilonGreedyPolicy(self.q_f, 0.05)
 
 
 # todo need to get rid of this somehow, just format the observation correctly, or use the transform from the config

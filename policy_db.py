@@ -6,6 +6,10 @@ import copy
 import random
 import torch
 
+import logging
+logger = logging.getLogger(__name__)
+
+
 policy_db_proxy = Proxy()
 
 

@@ -6,6 +6,9 @@ from data import Db, Step
 from statistics import mean
 from util import timeit, UniImageViewer
 
+import logging
+logger = logging.getLogger(__name__)
+
 
 # @timeit
 # def rollout_adversarial_policy(policy, env_config, epoch):

@@ -56,7 +56,17 @@ def test_ppo_clip_continuous(capsys):
     policy_net = PPOWrapModel(model)
     ppo = PurePPOClip()
 
-    for epoch in range(30):
+    for epoch in range(3):
 
         exp_buffer = rollout_policy(10, policy_net, config, capsys)
         ppo(policy_net, exp_buffer, config)
+
+
+def test_one_step_td():
+    config = configs.MountainCar()
+    model = config.model.get_model()
+
+    algo = OneStepTD()
+
+    for epoch in range(3):
+        pass
