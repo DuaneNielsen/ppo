@@ -287,6 +287,38 @@ class MountainCarValue(DiscreteConfig):
         self.action_transform = models.OneHotDiscreteActionTransform(self.action_map)
 
 
+class OneHotObsWrapper(gym.ObservationWrapper):
+    """
+    converts discrete observations to one-hot vectors
+    """
+    def __init__(self, env):
+        super().__init__(env)
+        self.observation_space.shape = (self.env.observation_space.n, )
+
+    def observation(self, observation):
+        one_hot = np.zeros(self.env.observation_space.n, dtype=np.float)
+        one_hot[observation] = 1.0
+        return one_hot
+
+
+class FrozenLakeValue(DiscreteConfig):
+    def __init__(self):
+        gym_string = 'FrozenLake-v0'
+        env = gym.make(gym_string)
+        env = OneHotObsWrapper(env)
+        dtype = env.reset().dtype
+        super().__init__(
+            features=env.observation_space.shape[0],
+            features_dtype=dtype,
+            gym_env_string=gym_string,
+            action_map=[n for n in range(env.action_space.n)]
+        )
+        self.hidden = 8
+        self.adversarial = False
+        self.players = 1
+        self.action_transform = models.OneHotDiscreteActionTransform(self.action_map)
+        self.wrappers = [OneHotObsWrapper]
+
 
 class PongAdversarial:
     def __init__(self):

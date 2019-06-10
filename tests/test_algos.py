@@ -23,6 +23,9 @@ def rollout_policy(num_episodes, policy, config, capsys=None, redis_host='localh
     rollout = db.create_rollout(config)
     v = UniImageViewer(config.gym_env_string, (200, 160))
     env = gym.make(config.gym_env_string)
+    if config.wrappers:
+        for wrapper in config.wrappers:
+            env = wrapper(env)
     rewards = []
 
     for i in range(num_episodes):
@@ -44,7 +47,7 @@ def test_ppo_clip_discrete():
 
     for epoch in range(3):
 
-        exp_buffer = rollout_policy(3, policy_net, config)
+        exp_buffer = rollout_policy(10, policy_net, config)
         policy_net = ppo(policy_net, exp_buffer, config)
         assert True
 
@@ -63,7 +66,7 @@ def test_ppo_clip_continuous(capsys):
 
 
 def test_one_step_td(capsys):
-    config = configs.MountainCarValue()
+    config = configs.FrozenLakeValue()
     qfunc = QMLP(config.features, len(config.action_map), config.features + len(config.action_map))
     one_step_td = OneStepTD(qfunc)
     policy = ValuePolicy(qfunc, EpsilonGreedyDiscreteDist, epsilon=0.05)

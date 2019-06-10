@@ -138,7 +138,7 @@ class OneStepTD:
         dataset = SARSDataset(exp_buffer, state_transform=config.transform, action_transform=config.action_transform)
         loader = DataLoader(dataset, batch_size=len(dataset), shuffle=True)
 
-        for _ in range(100):
+        for _ in range(10):
 
             for state, action, reward, next_state in loader:
                 next_action = self.greedy_policy(next_state).sample()
