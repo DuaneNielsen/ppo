@@ -430,6 +430,7 @@ class Episode:
         self.total_reward_key = self.id + '_total_reward'
         self.batch = 0
         self.p = None
+        self.redis.incrbyfloat(self.total_reward_key, 0)
 
     def end(self):
         if self.p is not None:
@@ -451,7 +452,8 @@ class Episode:
 
     def total_reward(self):
         try:
-            total = float(self.redis.get(self.total_reward_key))
+            reward_str = self.redis.get(self.total_reward_key)
+            total = float(reward_str)
             return total
         except (ValueError, TypeError):
             logger.error('Error while getting total reward, returning 0')
