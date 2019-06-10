@@ -8,7 +8,6 @@ from threading import Thread
 from time import sleep
 from redis import StrictRedis
 import redis_lock
-import redlock
 from redis.lock import Lock
 
 @pytest.fixture()

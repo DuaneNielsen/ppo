@@ -270,6 +270,24 @@ class MountainCar(DiscreteConfig):
         self.players = 1
 
 
+class MountainCarValue(DiscreteConfig):
+    def __init__(self):
+        gym_string = 'MountainCar-v0'
+        env = gym.make(gym_string)
+        dtype = env.reset().dtype
+        super().__init__(
+            features=env.observation_space.shape[0],
+            features_dtype=dtype,
+            gym_env_string=gym_string,
+            action_map=[n for n in range(env.action_space.n)]
+        )
+        self.hidden = 8
+        self.adversarial = False
+        self.players = 1
+        self.action_transform = models.OneHotDiscreteActionTransform(self.action_map)
+
+
+
 class PongAdversarial:
     def __init__(self):
         self.gym_env_string = 'PymunkPong-v0'

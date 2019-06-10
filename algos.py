@@ -135,14 +135,14 @@ class OneStepTD:
     def __call__(self, policy, exp_buffer, config, device='cpu'):
 
         optim = optimizer(config, self.q_func.parameters())
-        dataset = SARSDataset(exp_buffer)
+        dataset = SARSDataset(exp_buffer, state_transform=config.transform, action_transform=config.action_transform)
         loader = DataLoader(dataset, batch_size=len(dataset), shuffle=True)
 
         for _ in range(100):
 
             for state, action, reward, next_state in loader:
                 next_action = self.greedy_policy(next_state).sample()
-                target = reward + config.discount * self.q_func(next_state, next_action)
+                target = reward + config.discount_factor * self.q_func(next_state, next_action)
 
                 optim.zero_grad()
                 predicted = self.q_func(state, action)

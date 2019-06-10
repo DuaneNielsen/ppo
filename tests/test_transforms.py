@@ -20,7 +20,7 @@ def test_discrete_action_trasform():
 def test_one_hot_action_transform():
     action_map = [0, 1, 6]
     transform = OneHotDiscreteActionTransform(action_map)
-    assert transform(torch.tensor([[2]])) == 6
+    assert transform(torch.tensor([[0.0, 0.0, 1.0]])) == 6
     assert torch.allclose(transform.invert(6, torch.float32),  torch.tensor([0.0, 0.0, 1.0], dtype=torch.float32))
-    assert transform(torch.tensor([[1]])) == 1
+    assert transform(torch.tensor([[0.0, 1.0, 0.1]])) == 1
     assert torch.allclose(transform.invert(1, torch.float32),  torch.tensor([0.0, 1.0, 0.0], dtype=torch.float32))

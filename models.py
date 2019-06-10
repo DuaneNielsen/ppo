@@ -62,10 +62,9 @@ class MultiPolicyNet(nn.Module):
 
 
 class QMLP(nn.Module):
-    def __init__(self, features, features_dtype, actions, hidden):
+    def __init__(self, features, actions, hidden):
         super().__init__()
         self.features = features
-        self.features_dtype = features_dtype
         self.actions = actions
 
         self.l1 = nn.Linear(features + actions, hidden)
@@ -84,7 +83,13 @@ class GreedyDiscreteDist:
             self.probs = self.probs.unsqueeze(0)
 
     def sample(self):
-        return torch.argmax(self.probs, dim=1)
+        """
+        Greedy "sampling"
+        :return: the maximum action
+        """
+        one_hot = torch.zeros_like(self.probs)
+        one_hot[torch.arange(self.probs.size(0)), torch.argmax(self.probs, dim=1)] = 1.0
+        return one_hot
 
     # not sure what this should actually be, below is entropy of a random draw
     def entropy(self):
@@ -92,7 +97,7 @@ class GreedyDiscreteDist:
 
     # this is not correct, the probs are 0 or 1
     def logprob(self, action):
-        return torch.log(self.probs[torch.arange(self.probs.size(0)), action])
+        return torch.log(torch.sum(self.probs * action, dim=1))
 
 
 class OneDistOnly(Exception):
@@ -116,20 +121,21 @@ class EpsilonGreedyDiscreteDist:
         self.p[torch.arange(self.p.size(0)), max] = 1.0 - self.epsilon
 
     def sample(self):
-        return torch.multinomial(self.p.squeeze(0), 1).unsqueeze(0)
+        return OneHotCategorical(self.p.squeeze(0)).sample()
 
     def entropy(self):
         return torch.sum(- self.probs * torch.log2(self.probs))
 
     def logprob(self, action):
-        return torch.log(self.p[0, action])
+        probs = torch.sum(self.p * action, dim=1)
+        return torch.log(probs)
 
 
 class ValuePolicy(nn.Module):
     def __init__(self, qf, dist_class, **kwargs):
         super().__init__()
         self.qf = qf
-        self.actions = torch.eye(self.qf.actions, dtype=self.qf.features_dtype)
+        self.actions = torch.eye(self.qf.actions)
         self.dist_class = dist_class
         self.kwargs = kwargs
 
@@ -356,9 +362,7 @@ class OneHotDiscreteActionTransform:
         model -> environment
         :return:
         """
-        action_map = self.action_map.expand(action.size(0), -1)
-        action = action_map.take(action)
-        return action.squeeze().item()
+        return self.action_map[torch.argmax(action.squeeze())].item()
 
     def invert(self, action, dtype):
         """

@@ -30,8 +30,8 @@ def test_greedy_dist():
     a = gd.sample()
     logprob = gd.logprob(a)
 
-    assert a[0].item() == 0
-    assert a[1].item() == 1
+    assert a[0, 0].item() == 1
+    assert a[1, 1].item() == 1
     assert logprob[0].item() - log(0.2867) < 1e-5
     assert logprob[1].item() - log(0.2696) < 1e-5
 
@@ -42,16 +42,17 @@ def test_epsilon_greedy_dist():
 
     samples = torch.zeros_like(p)
 
-    for _ in range(100000):
+    for _ in range(10000):
         a = gd.sample()
-        samples[0, a] += 1.0
+        index = torch.argmax(a)
+        samples[0, index] += 1.0
 
-    p_sampled = samples / 100000
-    assert torch.allclose(torch.tensor([1.0 - 0.05, 0.05/3, 0.05/3, 0.05/3]), p_sampled, atol=1e-3)
+    p_sampled = samples / 10000
+    assert torch.allclose(torch.tensor([1.0 - 0.05, 0.05/3, 0.05/3, 0.05/3]), p_sampled, atol=1e-2)
 
-    prob = gd.logprob(torch.tensor([[0]]))
-    assert gd.logprob(torch.tensor([[0]])).item() - log(1.0 - 0.05) < 1e-5
-    assert gd.logprob(torch.tensor([[1]])).item() - log(0.05/3) < 1e-5
+    prob = gd.logprob(torch.tensor([[1.0, 0.0, 0.0, 0.0]]))
+    assert gd.logprob(torch.tensor([[1.0, 0.0, 0.0, 0.0]])).item() - log(1.0 - 0.05) < 1e-5
+    assert gd.logprob(torch.tensor([[0.0, 1.0, 0.0, 0.0]])).item() - log(0.05/3) < 1e-5
 
 
 class TestQF(nn.Module):

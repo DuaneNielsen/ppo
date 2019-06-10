@@ -63,9 +63,8 @@ def test_ppo_clip_continuous(capsys):
 
 
 def test_one_step_td(capsys):
-    config = configs.MountainCar()
-    qfunc = QMLP(config.features, config.features_dtype_torch, len(config.action_map), config.features + len(config.action_map))
-    #model = config.model.get_model()
+    config = configs.MountainCarValue()
+    qfunc = QMLP(config.features, len(config.action_map), config.features + len(config.action_map))
     one_step_td = OneStepTD(qfunc)
     policy = ValuePolicy(qfunc, EpsilonGreedyDiscreteDist, epsilon=0.05)
 
