@@ -68,12 +68,14 @@ class QMLP(nn.Module):
         self.actions = actions
 
         self.l1 = nn.Linear(features + actions, hidden)
-        self.l2 = nn.Linear(hidden, 1)
+        self.l2 = nn.Linear(hidden, hidden)
+        self.output = nn.Linear(hidden, 1, bias=False)
 
     def forward(self, state, action):
         state = torch.cat((state, action), dim=1)
         hidden = torch.relu(self.l1(state))
-        return self.l2(hidden)
+        hidden = torch.relu(self.l2(hidden))
+        return self.output(hidden).squeeze()
 
 
 class GreedyDiscreteDist:

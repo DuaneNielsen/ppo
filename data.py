@@ -167,6 +167,8 @@ class SARSDataset(Dataset):
         """
         Creates a dataset that returns S0 A0 => R1 S1
         :param exp_buffer: the experience buffer containing episodes
+        returns state, action, reward, next_state, done
+        done means the transition is terminal, ie: next_state is a terminal state
         """
         self.exp_buffer = exp_buffer
         self.state_transform = state_transform
@@ -192,7 +194,7 @@ class SARSDataset(Dataset):
         next_step = self.exp_buffer[step_index + 1]
         reward = torch.tensor(step.reward, dtype=self.precision)
         next_state = self.state_transform(next_step.observation, dtype=self.precision)
-        return state, action, reward, next_state
+        return state, action, reward, next_state, next_step.done
 
     def __len__(self):
         return len(self.index)

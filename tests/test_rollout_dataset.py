@@ -164,10 +164,12 @@ def test_SARS_dataset(db):
 
     assert len(dataset) == 2
 
-    state, action, reward, next_state = dataset[0]
+    state, action, reward, next_state, done = dataset[0]
     assert torch.allclose(action, torch.tensor([0, 1], dtype=torch.float32))
-    state, action, reward, next_state = dataset[1]
+    assert done is False
+    state, action, reward, next_state, done = dataset[1]
     assert torch.allclose(action, torch.tensor([1, 0], dtype=torch.float32))
+    assert done is True
 
 
 def add_dud_episode(exp_buffer):
@@ -207,10 +209,10 @@ def test_SARS_dataset_2episodes(db):
 
     assert len(dataset) == 4
 
-    state, action, reward, next_state = dataset[0]
-    state, action, reward, next_state = dataset[1]
-    state, action, reward, next_state = dataset[2]
-    state, action, reward, next_state = dataset[3]
+    state, action, reward, next_state, done = dataset[0]
+    state, action, reward, next_state, done = dataset[1]
+    state, action, reward, next_state, done = dataset[2]
+    state, action, reward, next_state, done = dataset[3]
 
 
 
@@ -230,5 +232,5 @@ def test_SARS_dataset_edge_2(db):
 
     assert len(dataset) == 2
 
-    state, action, reward, next_state = dataset[0]
-    state, action, reward, next_state = dataset[1]
+    state, action, reward, next_state, done = dataset[0]
+    state, action, reward, next_state, done = dataset[1]

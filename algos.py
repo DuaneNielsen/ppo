@@ -138,15 +138,21 @@ class OneStepTD:
         dataset = SARSDataset(exp_buffer, state_transform=config.transform, action_transform=config.action_transform)
         loader = DataLoader(dataset, batch_size=len(dataset), shuffle=True)
 
-        for _ in range(10):
+        loss = torch.tensor([2])
 
-            for state, action, reward, next_state in loader:
+        while loss.item() > config.convergence_error:
+
+            for state, action, reward, next_state, done in loader:
+
+                zero_if_terminal = (~done).to(next_state.dtype)
                 next_action = self.greedy_policy(next_state).sample()
-                target = reward + config.discount_factor * self.q_func(next_state, next_action)
+                next_value = self.q_func(next_state, next_action)
+                target = reward + zero_if_terminal * config.discount_factor * next_value
 
                 optim.zero_grad()
                 predicted = self.q_func(state, action)
                 loss = torch.mean((target - predicted)) ** 2
+                logger.info(loss.item())
                 loss.backward()
                 optim.step()
 

@@ -19,6 +19,11 @@ class DefaultPrePro:
         return observation_t1 - observation_t0
 
 
+class NoPrePro:
+    def __call__(self, observation_t1, observation_t0):
+        return observation_t1
+
+
 class ModelConfig:
     def __init__(self, name):
         self.name = name
@@ -237,6 +242,7 @@ class GymDiscreteConfig(DiscreteConfig):
         self.hidden = 8
         self.adversarial = False
         self.players = 1
+        self.wrappers = []
 
 
 class LunarLander(GymDiscreteConfig):
@@ -311,7 +317,8 @@ class FrozenLakeValue(DiscreteConfig):
             features=env.observation_space.shape[0],
             features_dtype=dtype,
             gym_env_string=gym_string,
-            action_map=[n for n in range(env.action_space.n)]
+            action_map=[n for n in range(env.action_space.n)],
+            prepro=NoPrePro()
         )
         self.hidden = 8
         self.adversarial = False
