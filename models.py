@@ -4,6 +4,7 @@ from torch.nn import functional as NN
 from torch.distributions import *
 import copy
 from messages import ModuleHandler
+from torch.autograd import Variable
 
 import logging
 logger = logging.getLogger(__name__)
@@ -76,6 +77,34 @@ class QMLP(nn.Module):
         hidden = torch.relu(self.l1(state))
         hidden = torch.relu(self.l2(hidden))
         return self.output(hidden).squeeze()
+
+
+class LinearQ(nn.Module):
+    def __init__(self, features, actions):
+        super().__init__()
+        self.features = features
+        self.actions = actions
+
+        self.l1 = nn.Linear(features + actions, 1, bias=False)
+
+    def forward(self, state, action):
+        state = torch.cat((state, action), dim=1)
+        return self.l1(state).squeeze()
+
+
+class QTable(nn.Module):
+    def __init__(self, features, actions):
+        super().__init__()
+        self.weights = nn.Parameter(torch.rand(features, actions))
+        self.states = features
+        self.actions = actions
+
+    def forward(self, state, action):
+        state = state.unsqueeze(2)
+        action = action.unsqueeze(1)
+        context = torch.matmul(state, action)
+        context = context * self.weights
+        return torch.sum(context, dim=[1, 2])
 
 
 class GreedyDiscreteDist:
@@ -160,9 +189,10 @@ class ValuePolicy(nn.Module):
         values = self.qf(states, actions)
         values = values.reshape(batch_size, self.qf.actions)
 
-        sum = torch.sum(values, dim=1)
-        sum = sum.unsqueeze(1).expand(-1, self.qf.actions)
-        probs = torch.div(values, sum)
+        #sum = torch.sum(values, dim=1)
+        #sum = sum.unsqueeze(1).expand(-1, self.qf.actions)
+        #probs = torch.div(values, sum)
+        probs = torch.softmax(values, dim=1)
 
         return self.dist_class(probs, **self.kwargs)
 

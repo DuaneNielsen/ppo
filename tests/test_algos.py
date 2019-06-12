@@ -108,19 +108,19 @@ def test_policy(capsys):
     assert len(exp_buffer) == 4
     assert len(dataset) == 3
 
-    state, action, reward, nxt = dataset[0]
+    state, action, reward, nxt, done = dataset[0]
     assert torch.allclose(state, torch.tensor([1.0, 0.0, 0.0, 0.0]))
     assert torch.allclose(action, torch.tensor([0.0, 1.0]))
     assert reward == 0.0
     assert torch.allclose(nxt, torch.tensor([0.0, 1.0, 0.0, 0.0]))
 
-    state, action, reward, nxt = dataset[1]
+    state, action, reward, nxt, done = dataset[1]
     assert torch.allclose(state, torch.tensor([0.0, 1.0, 0.0, 0.0]))
     assert torch.allclose(nxt, torch.tensor([0.0, 0.0, 1.0, 0.0]))
     assert torch.allclose(action, torch.tensor([0.0, 1.0]))
     assert reward == 0.0
 
-    state, action, reward, nxt = dataset[2]
+    state, action, reward, nxt, done = dataset[2]
     assert torch.allclose(state, torch.tensor([0.0, 0.0, 1.0, 0.0]))
     assert torch.allclose(nxt, torch.tensor([0.0, 0.0, 0.0, 1.0]))
     assert torch.allclose(action, torch.tensor([0.0, 1.0]))
@@ -152,17 +152,24 @@ def test_one_step_td(capsys):
     config.lr = 0.1
     config.convergence_error = 1e-3
     config.wrappers.append(TimeLimit)
-    qfunc = QMLP(config.features, len(config.action_map), config.features + len(config.action_map))
+    #qfunc = QMLP(config.features, len(config.action_map), config.features + len(config.action_map))
+    qfunc = QTable(config.features, len(config.action_map))
     one_step_td = OneStepTD(qfunc)
-    policy = ValuePolicy(qfunc, EpsilonGreedyDiscreteDist, epsilon=0.1)
-
-    for epoch in range(100):
-        exp_buffer = rollout_policy(100, policy, config, capsys)
-        policy = one_step_td(policy, exp_buffer, config)
+    policy = ValuePolicy(qfunc, EpsilonGreedyDiscreteDist, epsilon=0.3)
 
     states, actions = q_table(3, 2)
     values = policy.qf(states, actions)
-    print(states, actions, values)
+    for i in range(2, 4):
+        logger.info(f'{states[i]}, {actions[i]}, {values[i]}')
 
-        #print(values.reshape(4, 2))
+    for epoch in range(10):
+        exp_buffer = rollout_policy(10, policy, config, capsys)
+        policy = one_step_td(policy, exp_buffer, config)
 
+        states, actions = q_table(3, 2)
+        values = policy.qf(states, actions)
+        test_policy = ValuePolicy(policy.qf, GreedyDiscreteDist)
+        for i in range(2, 4):
+            action = test_policy(states[i].unsqueeze(0)).sample()
+            logger.info(f'{states[i]}, {actions[i]}, {values[i]}, {action}')
+        logger.info(f'{qfunc.weights}')

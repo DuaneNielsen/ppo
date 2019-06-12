@@ -151,13 +151,13 @@ class OneStepTD:
 
                 optim.zero_grad()
                 predicted = self.q_func(state, action)
-                loss = torch.mean((target - predicted)) ** 2
-                logger.info(loss.item())
+                loss = torch.mean((target - predicted) ** 2)
+                #logger.info(loss.item())
                 loss.backward()
                 optim.step()
 
         # return an epsilon greedy policy as actor
-        return ValuePolicy(self.q_func, EpsilonGreedyDiscreteDist, epsilon=0.05)
+        return ValuePolicy(self.q_func, EpsilonGreedyDiscreteDist, epsilon=0.2)
 
 
 # todo need to get rid of this somehow, just format the observation correctly, or use the transform from the config
