@@ -342,8 +342,8 @@ class ContinousActionTransform:
             raise InfinityException
         return action.numpy()
 
-    def invert(self, action):
-        return torch.from_numpy(action)
+    def invert(self, action, dtype):
+        return torch.from_numpy(action).to(dtype=dtype)
 
 
 class DiscreteActionTransform:

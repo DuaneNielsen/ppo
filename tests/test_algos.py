@@ -43,6 +43,8 @@ def rollout_policy(num_episodes, policy, config, capsys=None, redis_host='localh
 def test_ppo_clip_discrete():
 
     config = configs.LunarLander()
+    optimizer = OptimizerConfig('SGD', lr=0.1)
+    config.algo = PurePPOClipConfig(optimizer, ppo_steps_per_batch=10)
     model = config.model.get_model()
     policy_net = PPOWrapModel(model)
     ppo = PurePPOClip()
@@ -57,6 +59,8 @@ def test_ppo_clip_discrete():
 def test_ppo_clip_continuous(capsys):
 
     config = configs.HalfCheetah()
+    optimizer = OptimizerConfig('SGD', lr=0.1)
+    config.algo = PurePPOClipConfig(optimizer, ppo_steps_per_batch=10)
     model = MultiPolicyNetContinuous(config.model.features_size, config.model.action_size, config.model.hidden_size)
     policy_net = PPOWrapModel(model)
     ppo = PurePPOClip()
@@ -149,12 +153,12 @@ def test_policy_with_bandit(capsys):
 def test_one_step_td(capsys):
     config = Bandit()
     config.optimizer = 'SGD'
-    config.lr = 0.1
-    config.convergence_error = 1e-3
+    optimizer = OptimizerConfig('SGD', lr=0.1)
+    config.algo = OneStepTDConfig(optimizer)
     config.wrappers.append(TimeLimit)
     #qfunc = QMLP(config.features, len(config.action_map), config.features + len(config.action_map))
     qfunc = QTable(config.features, len(config.action_map))
-    one_step_td = OneStepTD(qfunc)
+    one_step_td = OneStepTD()
     policy = ValuePolicy(qfunc, EpsilonGreedyDiscreteDist, epsilon=0.3)
 
     states, actions = q_table(3, 2)
@@ -164,7 +168,7 @@ def test_one_step_td(capsys):
 
     for epoch in range(10):
         exp_buffer = rollout_policy(10, policy, config, capsys)
-        policy = one_step_td(policy, exp_buffer, config)
+        policy = one_step_td(qfunc, exp_buffer, config)
 
         states, actions = q_table(3, 2)
         values = policy.qf(states, actions)
@@ -177,13 +181,11 @@ def test_one_step_td(capsys):
 
 def test_one_step_td_linewalk(capsys):
     config = LineWalk()
-    config.optimizer = 'SGD'
-    config.lr = 0.1
-    config.min_change = 4e-5
+    optimizer = OptimizerConfig('SGD', lr=0.1)
+    config.algo = OneStepTDConfig(optimizer)
     config.wrappers.append(TimeLimit)
-    # qfunc = QMLP(config.features, len(config.action_map), config.features + len(config.action_map))
     qfunc = QTable(config.features, len(config.action_map))
-    one_step_td = OneStepTD(qfunc)
+    one_step_td = OneStepTD()
     policy = ValuePolicy(qfunc, EpsilonGreedyDiscreteDist, epsilon=0.3)
 
     states, actions = q_table(config.features, config.actions)
@@ -193,7 +195,7 @@ def test_one_step_td_linewalk(capsys):
 
     for epoch in range(30):
         exp_buffer = rollout_policy(100, policy, config, capsys)
-        policy = one_step_td(policy, exp_buffer, config)
+        policy = one_step_td(qfunc, exp_buffer, config)
 
         states, actions = q_table(config.features, config.actions)
         values = policy.qf(states, actions)

@@ -33,8 +33,13 @@ class ModelConfig:
 
 
 class AlgoConfig:
-    def __init__(self, name):
-        self.name=name
+    def __init__(self, algo_class, **kwargs):
+        self.clazz = algo_class
+        self.name = algo_class.__name__
+        self.kwargs = kwargs
+
+    def construct(self):
+        return self.clazz()
 
 
 class EnvConfig:
@@ -90,8 +95,8 @@ class BaseConfig:
 
         # environment config
         self.gym_env_string = gym_env_string
+        self.wrappers = []
 
-        self.training_algo = 'ppo'
         self.model_string = 'MultiPolicyNet'
         self.step_coder = None
         self.discount_factor = discount_factor
@@ -111,9 +116,6 @@ class BaseConfig:
         self.timeout = 40
 
         # training
-        self.max_minibatch_size = 10000
-        self.optimizer = 'SGD'
-        self.lr = 0.05
         self.ppo_steps_per_batch = 10
         self.entropy_bonus = 0.0
         self._precision = "torch.float32"

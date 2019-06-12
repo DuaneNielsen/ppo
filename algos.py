@@ -7,6 +7,7 @@ os.environ['GPU_DEBUG'] = '0'
 import torch
 from torch import tensor
 
+from configs import AlgoConfig
 from util import Converged
 from torch.utils.data import DataLoader
 import logging
@@ -65,26 +66,17 @@ def ppo_loss_log(newlogprob, oldlogprob, advantage, clip=0.2):
     return min_step.mean()
 
 
-class NoOptimizer(Exception):
-    pass
-
-
-def optimizer(config, parameters):
-    if config.optimizer == 'Adam':
-        optim = torch.optim.Adam(lr=config.lr, params=parameters)
-
-    elif config.optimizer == 'SGD':
-        optim = torch.optim.SGD(lr=config.lr, params=parameters, weight_decay=1e-4)
-    else:
-        raise NoOptimizer
-
-    return optim
+class PurePPOClipConfig(AlgoConfig):
+    def __init__(self, optimizer, ppo_steps_per_batch):
+        super().__init__(PurePPOClip)
+        self.optimizer = optimizer
+        self.ppo_steps_per_batch = ppo_steps_per_batch
 
 
 class PurePPOClip:
     def __call__(self, policy, exp_buffer, config, device='cpu'):
 
-        optim = optimizer(config, policy.parameters())
+        optim = config.algo.optimizer.construct(policy.parameters())
         policy = policy.train()
         policy = policy.to(device)
         dataset = SARAdvantageDataset(exp_buffer, discount_factor=config.discount_factor, state_transform=config.transform,
@@ -94,7 +86,7 @@ class PurePPOClip:
         batches_p = 0
         for observation, action, reward, advantage in loader:
             batches_p += 1
-            for step in range(config.ppo_steps_per_batch):
+            for step in range(config.algo.ppo_steps_per_batch):
 
                 #todo catergorical distrubution loss.backward() super slow (pytorch problem)
                 optim.zero_grad()
@@ -125,23 +117,48 @@ class PurePPOClip:
         return policy
 
 
+class NoOptimizer(Exception):
+    pass
+
+
+class OptimizerConfig:
+    def __init__(self, name, **kwargs):
+        self.name = name
+        self.kwargs = kwargs
+
+    def construct(self, parameters):
+        if self.name == 'Adam':
+            optim = torch.optim.Adam(params=parameters, **self.kwargs)
+
+        elif self.name == 'SGD':
+            optim = torch.optim.SGD(params=parameters, **self.kwargs)
+        else:
+            raise NoOptimizer
+
+        return optim
+
+
+class OneStepTDConfig(AlgoConfig):
+    def __init__(self, optimizer, min_change=2e-4, detections=5, detection_window=8):
+        super().__init__(OneStepTD)
+        self.optimizer = optimizer
+        self.min_change = min_change
+        self.detections = detections
+        self.detection_window = detection_window
+
+
 class OneStepTD:
-    def __init__(self, q_func):
+    def __call__(self, critic, exp_buffer, config, device='cpu'):
 
-        # q function
-        self.q_func = q_func
-
-        # greedy policy for the q function
-        self.greedy_policy = ValuePolicy(self.q_func, GreedyDiscreteDist)
-
-    def __call__(self, policy, exp_buffer, config, device='cpu'):
-
-        optim = optimizer(config, self.q_func.parameters())
+        one_step_config = config.algo
+        greedy_policy = ValuePolicy(critic, GreedyDiscreteDist)
+        optim = one_step_config.optimizer.construct(critic.parameters())
         dataset = SARSDataset(exp_buffer, state_transform=config.transform, action_transform=config.action_transform)
         loader = DataLoader(dataset, batch_size=len(dataset), shuffle=True)
-        c = Converged(config.min_change, detections=5, detection_window=8)
+        c = Converged(one_step_config.min_change, detections=one_step_config.detections,
+                      detection_window=one_step_config.detection_window)
 
-        loss = torch.tensor([2.0])
+        loss = torch.tensor([-1.0])
 
         while not c.converged(loss.item()):
             logger.info(f'loss: {loss.item()}')
@@ -149,18 +166,18 @@ class OneStepTD:
             for state, action, reward, next_state, done in loader:
 
                 zero_if_terminal = (~done).to(next_state.dtype)
-                next_action = self.greedy_policy(next_state).sample()
-                next_value = self.q_func(next_state, next_action)
+                next_action = greedy_policy(next_state).sample()
+                next_value = critic(next_state, next_action)
                 target = reward + zero_if_terminal * config.discount_factor * next_value
 
                 optim.zero_grad()
-                predicted = self.q_func(state, action)
+                predicted = critic(state, action)
                 loss = torch.mean((target - predicted) ** 2)
                 loss.backward()
                 optim.step()
 
         # return an epsilon greedy policy as actor
-        return ValuePolicy(self.q_func, EpsilonGreedyDiscreteDist, epsilon=0.2)
+        return ValuePolicy(critic, EpsilonGreedyDiscreteDist, epsilon=0.2)
 
 
 # todo need to get rid of this somehow, just format the observation correctly, or use the transform from the config
