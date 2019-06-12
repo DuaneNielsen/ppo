@@ -183,3 +183,27 @@ def get_tensors(gpu_only=True):
             pass
 
 
+class Converged:
+    def __init__(self, min_change, detections=2, detection_window=3):
+        self.min_change = min_change
+        self.detections = detections
+        self.detection_window = detection_window
+        self.prev_loss = 1e12
+        self.buffer = []
+
+    def converged(self, loss):
+        converging = 1.0 if abs(loss - self.prev_loss) < self.min_change else 0.0
+        self.buffer.append(converging)
+        if len(self.buffer) > self.detection_window:
+            self.buffer.pop(0)
+        self.prev_loss = loss
+        return sum(self.buffer) >= self.detections
+
+    def reset(self):
+        self.prev_loss = 1e12
+        del self.buffer
+        self.buffer = []
+
+
+
+

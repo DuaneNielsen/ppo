@@ -6,6 +6,8 @@ os.environ['GPU_DEBUG'] = '0'
 
 import torch
 from torch import tensor
+
+from util import Converged
 from torch.utils.data import DataLoader
 import logging
 gpu_profile = False
@@ -137,10 +139,12 @@ class OneStepTD:
         optim = optimizer(config, self.q_func.parameters())
         dataset = SARSDataset(exp_buffer, state_transform=config.transform, action_transform=config.action_transform)
         loader = DataLoader(dataset, batch_size=len(dataset), shuffle=True)
+        c = Converged(config.min_change, detections=5, detection_window=8)
 
-        loss = torch.tensor([2])
+        loss = torch.tensor([2.0])
 
-        while loss.item() > config.convergence_error:
+        while not c.converged(loss.item()):
+            logger.info(f'loss: {loss.item()}')
 
             for state, action, reward, next_state, done in loader:
 
@@ -152,7 +156,6 @@ class OneStepTD:
                 optim.zero_grad()
                 predicted = self.q_func(state, action)
                 loss = torch.mean((target - predicted) ** 2)
-                #logger.info(loss.item())
                 loss.backward()
                 optim.step()
 

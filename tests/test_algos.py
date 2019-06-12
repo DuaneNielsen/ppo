@@ -142,7 +142,7 @@ def test_policy_with_bandit(capsys):
     dataset = SARSDataset(exp_buffer, state_transform=DefaultTransform(), action_transform=config.action_transform)
 
     assert len(dataset) == 1
-    state, action, reward, nxt = dataset[0]
+    state, action, reward, nxt, done = dataset[0]
     assert True
 
 
@@ -170,6 +170,35 @@ def test_one_step_td(capsys):
         values = policy.qf(states, actions)
         test_policy = ValuePolicy(policy.qf, GreedyDiscreteDist)
         for i in range(2, 4):
+            action = test_policy(states[i].unsqueeze(0)).sample()
+            logger.info(f'{states[i]}, {actions[i]}, {values[i]}, {action}')
+        logger.info(f'{qfunc.weights}')
+
+
+def test_one_step_td_linewalk(capsys):
+    config = LineWalk()
+    config.optimizer = 'SGD'
+    config.lr = 0.1
+    config.min_change = 4e-5
+    config.wrappers.append(TimeLimit)
+    # qfunc = QMLP(config.features, len(config.action_map), config.features + len(config.action_map))
+    qfunc = QTable(config.features, len(config.action_map))
+    one_step_td = OneStepTD(qfunc)
+    policy = ValuePolicy(qfunc, EpsilonGreedyDiscreteDist, epsilon=0.3)
+
+    states, actions = q_table(config.features, config.actions)
+    values = policy.qf(states, actions)
+    for i in range(2, 4):
+        logger.info(f'{states[i]}, {actions[i]}, {values[i]}')
+
+    for epoch in range(30):
+        exp_buffer = rollout_policy(100, policy, config, capsys)
+        policy = one_step_td(policy, exp_buffer, config)
+
+        states, actions = q_table(config.features, config.actions)
+        values = policy.qf(states, actions)
+        test_policy = ValuePolicy(policy.qf, GreedyDiscreteDist)
+        for i in range(0, 6):
             action = test_policy(states[i].unsqueeze(0)).sample()
             logger.info(f'{states[i]}, {actions[i]}, {values[i]}, {action}')
         logger.info(f'{qfunc.weights}')
