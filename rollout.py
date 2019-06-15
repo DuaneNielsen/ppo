@@ -47,6 +47,7 @@ def single_episode(env, config, policy, rollout=None, v=None, render=False, disp
 
         if episode is not None:
             episode.append(Step(state, action, reward, False), config.gatherer.episode_batch_size)
+        episode_length += 1
 
         # compute the observation that resulted from our action
         state = config.data.prepro(observation_t1, observation_t0)

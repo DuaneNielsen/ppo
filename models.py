@@ -6,7 +6,10 @@ import copy
 from messages import ModuleHandler
 
 import logging
+
 logger = logging.getLogger(__name__)
+import inspect, sys
+
 
 # class MultiPolicyNet(nn.Module):
 #     def __init__(self, features, action_map, hidden=200):
@@ -160,6 +163,9 @@ class SmartQTable(nn.Module):
         return self.qt(hidden_state, action)
 
 
+ModuleHandler.handles(SmartQTable)
+
+
 class GreedyDiscreteDist:
     def __init__(self, probs):
         self.probs = probs
@@ -242,9 +248,9 @@ class ValuePolicy(nn.Module):
         values = self.qf(states, actions)
         values = values.reshape(batch_size, self.qf.actions)
 
-        #sum = torch.sum(values, dim=1)
-        #sum = sum.unsqueeze(1).expand(-1, self.qf.actions)
-        #probs = torch.div(values, sum)
+        # sum = torch.sum(values, dim=1)
+        # sum = sum.unsqueeze(1).expand(-1, self.qf.actions)
+        # probs = torch.div(values, sum)
         probs = torch.softmax(values, dim=1)
 
         return self.dist_class(probs, **self.kwargs)
@@ -318,6 +324,9 @@ class MultiPolicyNetContinuousV2(nn.Module):
         return mu
 
 
+ModuleHandler.handles(MultiPolicyNetContinuousV2)
+
+
 class PPOWrapModel(nn.Module):
     def __init__(self, model):
         super().__init__()
@@ -343,7 +352,7 @@ class PPOWrapModel(nn.Module):
 
 # this is needed to make the model serializable
 # a small price to pay for jsonpickle messages
-ModuleHandler.handles(PPOWrapModel)
+# ModuleHandler.handles(PPOWrapModel)
 
 
 class PPOWrap(nn.Module):
@@ -367,6 +376,13 @@ class PPOWrap(nn.Module):
 
 
 # make it transmittable
-ModuleHandler.handles(PPOWrap)
+# ModuleHandler.handles(PPOWrap)
 
+# this code block must be and the end of the file
+# this is required to make the models jsonpickleable
+clsmembers = inspect.getmembers(sys.modules[__name__],
+                                lambda member: inspect.isclass(member) and member.__module__ == __name__)
+for name, cls in clsmembers:
 
+    if issubclass(cls, nn.Module):
+        ModuleHandler.handles(cls)

@@ -22,6 +22,25 @@ from data.data import SARAdvantageDataset, SARSDataset
 from models import *
 
 
+class NoOptimizer(Exception):
+    pass
+
+
+class OptimizerConfig:
+    def __init__(self, clazz, **kwargs):
+        self.name = clazz.__name__
+        self.clazz = clazz
+        self.kwargs = kwargs
+
+    def construct(self, parameters):
+        return self.clazz(params=parameters, **self.kwargs)
+
+
+# default optimizers
+adam = OptimizerConfig(torch.optim.Adam, lr=1e-3)
+sgd = OptimizerConfig(torch.optim.SGD, lr=0.1)
+
+
 class AlgoConfig:
     def __init__(self, algo_class, **kwargs):
         self.clazz = algo_class
@@ -76,7 +95,7 @@ def ppo_loss_log(newlogprob, oldlogprob, advantage, clip=0.2):
 
 
 class PurePPOClipConfig(AlgoConfig):
-    def __init__(self, optimizer, discount_factor=0.99, ppo_steps_per_batch=10):
+    def __init__(self, optimizer=sgd, discount_factor=0.99, ppo_steps_per_batch=10):
         super().__init__(PurePPOClip)
         self.optimizer = optimizer
         self.discount_factor = discount_factor
@@ -84,11 +103,11 @@ class PurePPOClipConfig(AlgoConfig):
 
 
 class PurePPOClip:
-    def __call__(self, policy, exp_buffer, config, device='cpu'):
+    def __call__(self, actor, critic, exp_buffer, config, device='cpu'):
 
-        optim = config.algo.optimizer.construct(policy.parameters())
-        policy = policy.train()
-        policy = policy.to(device)
+        optim = config.algo.optimizer.construct(actor.parameters())
+        actor = actor.train()
+        actor = actor.to(device)
         dataset = SARAdvantageDataset(exp_buffer, discount_factor=config.algo.discount_factor,
                                       state_transform=config.data.transform,
                                       action_transform=config.data.action_transform, precision=config.data.precision)
@@ -102,13 +121,13 @@ class PurePPOClip:
                 #todo catergorical distrubution loss.backward() super slow (pytorch problem)
                 optim.zero_grad()
 
-                new_dist = policy(observation)
+                new_dist = actor(observation)
                 new_logprob = new_dist.log_prob(action)
                 new_logprob.retain_grad()
 
-                old_dist = policy(observation, old=True)
+                old_dist = actor(observation, old=True)
                 old_logprob = old_dist.log_prob(action)
-                policy.backup()
+                actor.backup()
 
                 loss = ppo_loss_log(new_logprob, old_logprob, advantage, clip=0.2)
                 #logging.info(f'loss {loss.item()}')
@@ -125,25 +144,11 @@ class PurePPOClip:
         if config.gpu_profile:
             gpu_profile(frame=sys._getframe(), event='line', arg=None)
 
-        return policy, policy
-
-
-class NoOptimizer(Exception):
-    pass
-
-
-class OptimizerConfig:
-    def __init__(self, clazz, **kwargs):
-        self.name = clazz.__name__
-        self.clazz = clazz
-        self.kwargs = kwargs
-
-    def construct(self, parameters):
-        return self.clazz(params=parameters, **self.kwargs)
+        return actor, None
 
 
 class OneStepTDConfig(AlgoConfig):
-    def __init__(self, optimizer, epsilon=0.05, discount_factor=0.99, min_change=2e-4, detections=5, detection_window=8):
+    def __init__(self, optimizer=adam, epsilon=0.05, discount_factor=0.99, min_change=2e-4, detections=5, detection_window=8):
         super().__init__(OneStepTD)
         self.optimizer = optimizer
         self.discount_factor = discount_factor
@@ -155,7 +160,7 @@ class OneStepTDConfig(AlgoConfig):
 
 
 class OneStepTD:
-    def __call__(self, critic, exp_buffer, config, device='cpu'):
+    def __call__(self, actor, critic, exp_buffer, config, device='cpu'):
 
         one_step_config = config.algo
         critic = critic.to(device)
@@ -204,6 +209,7 @@ class OneStepTD:
 
         # return an epsilon greedy policy as actor
         return ValuePolicy(critic, EpsilonGreedyDiscreteDist, epsilon=one_step_config.epsilon), critic
+
 
 
 # todo need to get rid of this somehow, just format the observation correctly, or use the transform from the config

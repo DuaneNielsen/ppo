@@ -28,10 +28,23 @@ class ModelConfig:
         return self.clazz(*self.args, **self.kwargs)
 
 
+class NoModel(ModelConfig):
+    def __init__(self):
+        super().__init__(str)
+
+    def get_model(self):
+        return None
+
+    def construct(self):
+        return None
+
+
 class UnknownSpaceTypeException(Exception):
     pass
 
 
+# todo this might also be able to return a dataconfig
+# todo account for preprocessing
 def make_env_config_for(name, wrappers=None):
     env = gym.make(name)
     if wrappers is not None:
@@ -107,6 +120,7 @@ class BaseConfig:
                  env_config,
                  algo_config,
                  random_policy_config,
+                 actor_config,
                  critic_config,
                  data_config,
                  gatherer_config
@@ -119,6 +133,9 @@ class BaseConfig:
 
         # model used for critic
         self.critic = critic_config
+
+        # model used for actor
+        self.actor = actor_config
 
         # training algorithm config
         self.algo = algo_config
@@ -144,11 +161,11 @@ class BaseConfig:
 class Discrete(BaseConfig):
     def __init__(self, env_string, wrappers=None):
         env_config = make_env_config_for(env_string, wrappers)
+        actor_config = NoModel()
         critic_config = ModelConfig(SmartQTable, features=env_config.state_space_shape[0], actions=env_config.actions,
                                     resnet_layers=1)
         random_policy_config = ModelConfig(RandomDiscretePolicy, env_config.actions)
-        optimizer = OptimizerConfig(torch.optim.Adam, lr=1e-3)
-        algo_config = OneStepTDConfig(optimizer)
+        algo_config = OneStepTDConfig()
         data_config = DataConfig(
             coder=DiscreteStepCoder(state_shape=env_config.state_space_shape, state_dtype=env_config.state_space_dtype),
             prepro=DefaultPrePro(),
@@ -156,7 +173,7 @@ class Discrete(BaseConfig):
             action_transform=data.transforms.OneHotDiscreteActionTransform(env_config.action_map)
         )
         gatherer_config = GatherConfig()
-        super().__init__(env_config, algo_config, random_policy_config, critic_config, data_config, gatherer_config)
+        super().__init__(env_config, algo_config, random_policy_config, actor_config, critic_config, data_config, gatherer_config)
 
 
 class GymContinuousConfig(EnvConfig):
@@ -170,11 +187,11 @@ class GymContinuousConfig(EnvConfig):
 class Continuous(BaseConfig):
     def __init__(self, env_string, wrappers=None):
         env_config = make_env_config_for(env_string, wrappers)
-        critic_config = ModelConfig(MultiPolicyNetContinuous, env_config.state_space_shape[0],
+        actor_config = ModelConfig(MultiPolicyNetContinuous, env_config.state_space_shape[0],
                                     env_config.action_space_shape[0], env_config.state_space_shape[0])
+        critic_config = NoModel()
         random_policy_config = ModelConfig(RandomContinuousPolicy, env_config.action_space_shape)
-        optimizer = OptimizerConfig(torch.optim.Adam, lr=1e-3)
-        algo_config = PurePPOClipConfig(optimizer)
+        algo_config = PurePPOClipConfig()
         data_config = DataConfig(
             coder=AdvancedStepCoder(state_shape=env_config.state_space_shape, state_dtype=env_config.state_space_dtype,
                                     action_shape=env_config.action_space_shape, action_dtype=env_config.action_space_dtype),
@@ -183,7 +200,7 @@ class Continuous(BaseConfig):
             action_transform=ContinousActionTransform()
         )
         gatherer_config = GatherConfig()
-        super().__init__(env_config, algo_config, random_policy_config, critic_config, data_config, gatherer_config)
+        super().__init__(env_config, algo_config, random_policy_config, actor_config, critic_config, data_config, gatherer_config)
 
 
 

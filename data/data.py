@@ -259,14 +259,14 @@ class Db:
         """clears all data from the database"""
         self.redis.flushall()
 
-    def create_rollout(self, env_config):
-        return RedisRollout(self.redis, env_config, next(self.rollout_seq))
+    def create_rollout(self, coder):
+        return RedisRollout(self.redis, coder, next(self.rollout_seq))
 
-    def latest_rollout(self, env_config):
-        return RedisRollout(self.redis, env_config, self.rollout_seq.current())
+    def latest_rollout(self, coder):
+        return RedisRollout(self.redis, coder, self.rollout_seq.current())
 
-    def rollout(self, id, config):
-        return RedisRollout(self.redis, config, id)
+    def rollout(self, id, coder):
+        return RedisRollout(self.redis, coder, id)
 
     def delete_rollout(self, rollout):
         # todo batch delete

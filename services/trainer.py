@@ -15,7 +15,7 @@ class Trainer(Server):
     def __init__(self, redis_host='localhost', redis_port=6379, redis_db=0, redis_password=None):
         super().__init__(redis_host, redis_port, redis_db, redis_password)
         self.handler.register(TrainMessage, self.handle_train)
-        self.exp_buffer = Db(host=redis_host, port=redis_port, db=redis_db, password=redis_password)
+        self.db = Db(host=redis_host, port=redis_port, db=redis_db, password=redis_password)
 
         logger.info('Init Complete')
 
@@ -23,11 +23,11 @@ class Trainer(Server):
 
         trainer = msg.config.algo.construct()
 
-        exp_buffer = self.exp_buffer.latest_rollout(msg.config)
+        exp_buffer = self.db.latest_rollout(msg.config.data.coder)
         assert len(exp_buffer) != 0
 
         logger.info('started training')
-        actor, critic = trainer(msg.critic, exp_buffer, msg.config)
+        actor, critic = trainer(msg.actor, msg.critic, exp_buffer, msg.config)
 
         logging.info('training complete')
         TrainCompleteMessage(self.id, actor, critic, msg.config).send(self.r)

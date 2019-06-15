@@ -42,24 +42,25 @@ def test_ppo_clip_discrete():
     config.data.action_transform = DiscreteActionTransform(config.env.action_map)
     model = configs.ModelConfig(MultiPolicyNet, config.env.state_space_shape[0], config.env.actions,
                                 hidden=config.env.state_space_shape[0])
-    config.critic = model
-    policy_net = PPOWrapModel(config.critic.construct())
+    config.actor = model
+    policy_net = PPOWrapModel(config.actor.construct())
     ppo = config.algo.construct()
+    critic = None
 
     for epoch in range(3):
         exp_buffer = rollout_policy(10, policy_net, config)
-        policy_net, critic = ppo(policy_net, exp_buffer, config)
+        policy_net, critic = ppo(policy_net, None, exp_buffer, config)
         assert True
 
 
 def test_ppo_clip_continuous(capsys):
     config = configs.Continuous('RoboschoolHalfCheetah-v1')
-    policy_net = PPOWrapModel(config.critic.construct())
+    policy_net = PPOWrapModel(config.actor.construct())
     algo = config.algo.construct()
 
     for epoch in range(3):
         exp_buffer = rollout_policy(10, policy_net, config, capsys)
-        policy_net, critic = algo(policy_net, exp_buffer, config)
+        policy_net, critic = algo(policy_net, None, exp_buffer, config)
 
 
 class LineWalk(configs.Discrete):
@@ -160,7 +161,7 @@ def test_one_step_td(capsys):
 
     for epoch in range(10):
         exp_buffer = rollout_policy(10, policy, config, capsys)
-        policy, qfunc = one_step_td(qfunc, exp_buffer, config)
+        policy, qfunc = one_step_td(None, qfunc, exp_buffer, config)
 
         states, actions = q_table(3, 2)
         values = policy.qf(states, actions)
@@ -191,7 +192,7 @@ def test_one_step_td_linewalk(capsys):
 
     for epoch in range(30):
         exp_buffer = rollout_policy(100, policy, config, capsys)
-        policy, qfunc = one_step_td(qfunc, exp_buffer, config)
+        policy, qfunc = one_step_td(None, qfunc, exp_buffer, config)
 
         states, actions = q_table(config.env.state_space_shape[0], config.env.actions)
         values = policy.qf(states, actions)
@@ -210,4 +211,4 @@ def test_one_step_td_LunarLander(capsys):
 
     for epoch in range(10):
         exp_buffer = rollout_policy(50, actor, config, capsys, render=True, render_freq=50)
-        actor, critic = algo(critic, exp_buffer, config, device='cuda')
+        actor, critic = algo(None, critic, exp_buffer, config, device='cuda')
