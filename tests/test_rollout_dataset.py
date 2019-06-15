@@ -5,7 +5,7 @@ from statistics import mean, stdev
 import pytest
 import numpy as np
 from torch.utils.data import DataLoader
-from models import OneHotDiscreteActionTransform
+from data.transforms import OneHotDiscreteActionTransform
 import torch
 
 

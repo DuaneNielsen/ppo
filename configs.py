@@ -2,124 +2,137 @@ import datetime
 
 import cv2
 from torchvision.transforms.functional import to_tensor
-import gym
+import gym, roboschool
 import data
-from data import *
-import models
-from models import DefaultTransform, ContinousActionTransform, DiscreteActionTransform
-
-
-def load_model(config, parameters):
-    model = config.model.get_model()
-    return model.load_state_dict(parameters)
-
-
-class DefaultPrePro:
-    def __call__(self, observation_t1, observation_t0):
-        return observation_t1 - observation_t0
-
-
-class NoPrePro:
-    def __call__(self, observation_t1, observation_t0):
-        return observation_t1
+import data.transforms
+from data.prepro import DefaultPrePro, NoPrePro
+from algos import OneStepTDConfig, PurePPOClipConfig, OptimizerConfig
+from data.transforms import DefaultTransform, ContinousActionTransform
+from data.coders import DiscreteStepCoder, AdvancedStepCoder
+import numpy as np
+import torch
+from models import SmartQTable, RandomDiscretePolicy, MultiPolicyNetContinuous, RandomContinuousPolicy
 
 
 class ModelConfig:
-    def __init__(self, name):
-        self.name = name
-
-    def get_model(self):
-        return None
-
-
-class AlgoConfig:
-    def __init__(self, algo_class, **kwargs):
-        self.clazz = algo_class
-        self.name = algo_class.__name__
+    def __init__(self, clazz, *args, **kwargs):
+        self.clazz = clazz
+        self.name = clazz.__name__
+        self.args = args
         self.kwargs = kwargs
 
+    def get_model(self):
+        return self.clazz(*self.args, **self.kwargs)
+
     def construct(self):
-        return self.clazz()
+        return self.clazz(*self.args, **self.kwargs)
+
+
+class UnknownSpaceTypeException(Exception):
+    pass
+
+
+def make_env_config_for(name, wrappers=None):
+    env = gym.make(name)
+    if wrappers is not None:
+        for wrapper in wrappers:
+            env = wrapper(env)
+
+    if isinstance(env.action_space, gym.spaces.Discrete):
+        env_config = GymDiscreteConfig(name, env)
+    elif isinstance(env.action_space, gym.spaces.Box):
+        env_config = GymContinuousConfig(name, env)
+    else:
+        raise UnknownSpaceTypeException()
+
+    env_config.wrappers = wrappers if wrappers is not None else []
+
+    return env_config
+
+
+def make_connector_config_for(config):
+    pass
 
 
 class EnvConfig:
-    def __init__(self, name):
-        self.name=name
+    def __init__(self, name, env):
+        self.name = name
+        obs = env.reset()
+        self.state_space_shape = obs.shape
+        self.state_space_dtype = obs.dtype
+        self.wrappers = []
+        self.default_action = None
+
+    def construct(self):
+        env = gym.make(self.name)
+        for wrapper in self.wrappers:
+            env = wrapper(env)
+        return env
 
 
-class MultiPolicyNet(ModelConfig):
-    def __init__(self, features, hidden_size, actions):
-        super().__init__('MultiPolicyNet')
-        self.features = features
-        self.hidden_size = hidden_size
-        self.actions = actions
-
-    def get_model(self):
-        return models.MultiPolicyNet(self.features, self.actions, self.hidden_size)
+class GymDiscreteConfig(EnvConfig):
+    def __init__(self, name, env):
+        super().__init__(name, env)
+        self.action_map = [n for n in range(env.action_space.n)]
+        self.actions = env.action_space.n
+        self.default_action = 0
 
 
-class MultiPolicyNetContinuous(ModelConfig):
-    def __init__(self, feature_size, hidden_size, action_size):
-        super().__init__('MultiPolicyNet')
-        self.features_size = feature_size
-        self.hidden_size = hidden_size
-        self.action_size = action_size
+class DataConfig:
+    def __init__(self, coder, prepro, transform, action_transform):
+        self.coder = coder
+        self.prepro = prepro
+        self.transform = transform
+        self.action_transform = action_transform
+        self._precision = "torch.float32"
 
-    def get_model(self):
-        return models.MultiPolicyNetContinuous(self.features_size, self.action_size, self.hidden_size)
-
-
-class MultiPolicyNetContinuousV2(ModelConfig):
-    def __init__(self, feature_size, hidden_size, action_size):
-        super().__init__('MultiPolicyNetContinuousV2')
-        self.features_size = feature_size
-        self.hidden_size = hidden_size
-        self.action_size = action_size
-
-    def get_model(self):
-        return models.MultiPolicyNetContinuousV2(self.features_size, self.action_size, self.hidden_size)
+    @property
+    def precision(self):
+        return eval(self._precision)
 
 
-class GymEnvConfig(EnvConfig):
-    def __init__(self, name):
-        super().__init__(name)
+class GatherConfig:
+    def __init__(self):
+        self.episode_batch_size = 1  # the number of steps to buffer in the gatherer before updating
+        self.episodes_per_gatherer = 1  # number of episodes to gather before waiting for co-ordinator
+        self.num_steps_per_rollout = 2000
+        self.policy_reservoir_depth = 10
+        self.policy_top_depth = 10
+        self.timeout = 40
+        self.max_rollout_len = 3000  # terminate episodes that go longer than this
 
 
 class BaseConfig:
     def __init__(self,
-                 gym_env_string,
-                 discount_factor=0.99,
-                 prepro=DefaultPrePro(),
-                 transform=DefaultTransform(),
+                 env_config,
+                 algo_config,
+                 random_policy_config,
+                 critic_config,
+                 data_config,
+                 gatherer_config
                  ):
+        # run id
+        self.run_id = ''
 
         # environment config
-        self.gym_env_string = gym_env_string
-        self.wrappers = []
+        self.env = env_config
 
-        self.model_string = 'MultiPolicyNet'
-        self.step_coder = None
-        self.discount_factor = discount_factor
-        self.max_rollout_len = 3000  #terminate episodes that go longer than this
-        self.prepro = prepro
-        self.transform = transform
+        # model used for critic
+        self.critic = critic_config
 
-        self.continuous = False
+        # training algorithm config
+        self.algo = algo_config
 
-        # gathering
-        self.episode_batch_size = 1  # the number of steps to buffer in the gatherer before updating
-        self.episodes_per_gatherer = 1 # number of episodes to gather before waiting for co-ordinator
-        self.num_steps_per_rollout = 2000
-        self.policy_reservoir_depth = 10
-        self.policy_top_depth = 10
-        self.run_id = ''
-        self.timeout = 40
+        # random policy used to gather intial run
+        self.random_policy = random_policy_config
 
-        # training
-        self.ppo_steps_per_batch = 10
-        self.entropy_bonus = 0.0
-        self._precision = "torch.float32"
+        # data pipeline config
+        self.data = data_config
 
+        # configuration of data run
+        self.gatherer = gatherer_config
+
+        # gpu diagnostics
         self.gpu_profile = False
         self.gpu_profile_fn = f'{datetime.datetime.now():%d-%b-%y-%H-%M-%S}-gpu_mem_prof.txt'
         self.lineno = None
@@ -127,85 +140,85 @@ class BaseConfig:
         self.filename = None
         self.module_name = None
 
-    @property
-    def precision(self):
-        return eval(self._precision)
 
-
-class DiscreteConfig(BaseConfig):
-    def __init__(self,
-                 gym_env_string,
-                 features,
-                 features_dtype,
-                 action_map,
-                 default_action=0,
-                 discount_factor=0.99,
-                 prepro=DefaultPrePro(),
-                 transform=DefaultTransform(),
-                 ):
-        super().__init__(gym_env_string, discount_factor, prepro, transform)
-        self.features = features
-        self.action_map = action_map
-        self.actions = len(action_map)
-        self.default_action = default_action
-        self.model = MultiPolicyNet(features, features, self.actions)
-        self.action_transform = DiscreteActionTransform(action_map)
-        self.step_coder = DiscreteStepCoder(state_shape=features, state_dtype=features_dtype)
-
-
-class ContinuousConfig(BaseConfig):
-    def __init__(self,
-                 gym_env_string,
-                 state_space_features,
-                 state_space_dtype,
-                 action_space_features,
-                 action_space_dtype,
-                 discount_factor=0.99,
-                 prepro=DefaultPrePro(),
-                 transform=DefaultTransform(),
-                 ):
-        super().__init__(gym_env_string, discount_factor, prepro, transform)
-        self.state_space_features = state_space_features
-        self.state_space_dtype = state_space_dtype
-        self.action_space_features = action_space_features
-        self.action_space_dtype = action_space_dtype
-        self.continuous = True
-        self.action_transform = ContinousActionTransform()
-        self.default_action = np.zeros(action_space_features)
-        self.step_coder = AdvancedStepCoder(state_shape=self.state_space_features, state_dtype=self.state_space_dtype,
-                                            action_shape=self.action_space_features, action_dtype=self.action_space_dtype)
-
-
-class HalfCheetah(ContinuousConfig):
+class LunarLander(BaseConfig):
     def __init__(self):
-        super().__init__(
-            gym_env_string='RoboschoolHalfCheetah-v1',
-            state_space_features=26,
-            state_space_dtype=np.float32,
-            action_space_features=6,
-            action_space_dtype=np.float32
+        env_config = make_env_config_for('LunarLander-v2')
+        critic_config = ModelConfig(SmartQTable, features=env_config.state_space_shape[0], actions=env_config.actions,
+                                    resnet_layers=1)
+        random_policy_config = ModelConfig(RandomDiscretePolicy, env_config.actions)
+        optimizer = OptimizerConfig(torch.optim.Adam, lr=1e-3)
+        algo_config = OneStepTDConfig(optimizer)
+        data_config = DataConfig(
+            coder=DiscreteStepCoder(state_shape=env_config.state_space_shape, state_dtype=env_config.state_space_dtype),
+            prepro=DefaultPrePro(),
+            transform=data.transforms.DefaultTransform(),
+            action_transform=data.transforms.OneHotDiscreteActionTransform(env_config.action_map)
         )
-        self.model = MultiPolicyNetContinuousV2(
-            feature_size=self.state_space_features,
-            hidden_size=26,
-            action_size=self.action_space_features
-        )
+        gatherer_config = GatherConfig()
+        super().__init__(env_config, algo_config, random_policy_config, critic_config, data_config, gatherer_config)
 
 
-class Hopper(ContinuousConfig):
+class GymContinuousConfig(EnvConfig):
+    def __init__(self, name, env):
+        super().__init__(name, env)
+        self.action_space_shape = env.action_space.shape
+        self.action_space_dtype = env.action_space.dtype
+        self.default_action = np.zeros(env.action_space.shape)
+
+
+class HalfCheetah(BaseConfig):
     def __init__(self):
-        super().__init__(
-            gym_env_string='RoboschoolHopper-v1',
-            state_space_features=15,
-            state_space_dtype=np.float32,
-            action_space_features=3,
-            action_space_dtype=np.float32
+        env_config = make_env_config_for('RoboschoolHalfCheetah-v1')
+        critic_config = ModelConfig(MultiPolicyNetContinuous, env_config.state_space_shape[0],
+                                    env_config.action_space_shape[0], env_config.state_space_shape[0])
+        random_policy_config = ModelConfig(RandomContinuousPolicy, env_config.action_space_shape)
+        optimizer = OptimizerConfig(torch.optim.Adam, lr=1e-3)
+        algo_config = PurePPOClipConfig(optimizer)
+        data_config = DataConfig(
+            coder=AdvancedStepCoder(state_shape=env_config.state_space_shape, state_dtype=env_config.state_space_dtype,
+                                    action_shape=env_config.action_space_shape, action_dtype=env_config.action_space_dtype),
+            prepro=DefaultPrePro(),
+            transform=DefaultTransform(),
+            action_transform=ContinousActionTransform()
         )
-        self.model = MultiPolicyNetContinuousV2(
-            feature_size=self.state_space_features,
-            hidden_size=self.state_space_features,
-            action_size=self.action_space_features
-        )
+        gatherer_config = GatherConfig()
+        super().__init__(env_config, algo_config, random_policy_config, critic_config, data_config, gatherer_config)
+
+
+
+
+#
+# class HalfCheetah(ContinuousConfig):
+#     def __init__(self):
+#         super().__init__(
+#             gym_env_string='RoboschoolHalfCheetah-v1',
+#             state_space_features=26,
+#             state_space_dtype=np.float32,
+#             action_space_features=6,
+#             action_space_dtype=np.float32
+#         )
+#         self.model = MultiPolicyNetContinuousV2(
+#             feature_size=self.state_space_features,
+#             hidden_size=26,
+#             action_size=self.action_space_features
+#         )
+#
+#
+# class Hopper(ContinuousConfig):
+#     def __init__(self):
+#         super().__init__(
+#             gym_env_string='RoboschoolHopper-v1',
+#             state_space_features=15,
+#             state_space_dtype=np.float32,
+#             action_space_features=3,
+#             action_space_dtype=np.float32
+#         )
+#         self.model = MultiPolicyNetContinuousV2(
+#             feature_size=self.state_space_features,
+#             hidden_size=self.state_space_features,
+#             action_size=self.action_space_features
+#         )
 
 
 class Pong:
@@ -230,200 +243,127 @@ class Pong:
         else:
             return to_tensor(np.expand_dims(observation, axis=2)).view(self.features)
 
-
-class GymDiscreteConfig(DiscreteConfig):
-    def __init__(self, gym_string):
-        env = gym.make(gym_string)
-        dtype = env.reset().dtype
-        super().__init__(
-            features=env.observation_space.shape[0],
-            features_dtype=dtype,
-            gym_env_string=gym_string,
-            action_map=[n for n in range(env.action_space.n)]
-        )
-        self.hidden = 8
-        self.adversarial = False
-        self.players = 1
-        self.wrappers = []
+# class CartPole(GymDiscreteConfig):
+#     def __init__(self):
+#         super().__init__('CartPole-v0')
+#
+#
+# class Acrobot(GymDiscreteConfig):
+#     def __init__(self):
+#         super().__init__('Acrobot-v1')
 
 
-class LunarLander(GymDiscreteConfig):
-    def __init__(self):
-        super().__init__('LunarLander-v2')
+# class MountainCar(DiscreteConfig):
+#     def __init__(self):
+#         gym_string = 'MountainCar-v0'
+#         env = gym.make(gym_string)
+#         dtype = env.reset().dtype
+#         super().__init__(
+#             features=env.observation_space.shape[0],
+#             features_dtype=dtype,
+#             gym_env_string=gym_string,
+#             action_map=[n for n in range(env.action_space.n)]
+#         )
+#         self.hidden = 8
+#         self.adversarial = False
+#         self.players = 1
 
 
-class CartPole(GymDiscreteConfig):
-    def __init__(self):
-        super().__init__('CartPole-v0')
+# class MountainCarValue(DiscreteConfig):
+#     def __init__(self):
+#         gym_string = 'MountainCar-v0'
+#         env = gym.make(gym_string)
+#         dtype = env.reset().dtype
+#         super().__init__(
+#             features=env.observation_space.shape[0],
+#             features_dtype=dtype,
+#             gym_env_string=gym_string,
+#             action_map=[n for n in range(env.action_space.n)]
+#         )
+#         self.hidden = 8
+#         self.adversarial = False
+#         self.players = 1
+#         self.action_transform = data.transforms.OneHotDiscreteActionTransform(self.action_map)
 
 
-class Acrobot(GymDiscreteConfig):
-    def __init__(self):
-        super().__init__('Acrobot-v1')
+# class FrozenLakeValue(DiscreteConfig):
+#     def __init__(self):
+#         gym_string = 'FrozenLake-v0'
+#         env = gym.make(gym_string)
+#         env = OneHotObsWrapper(env)
+#         dtype = env.reset().dtype
+#         super().__init__(
+#             features=env.observation_space.shape[0],
+#             features_dtype=dtype,
+#             gym_env_string=gym_string,
+#             action_map=[n for n in range(env.action_space.n)],
+#             prepro=NoPrePro()
+#         )
+#         self.hidden = 8
+#         self.adversarial = False
+#         self.players = 1
+#         self.action_transform = data.transforms.OneHotDiscreteActionTransform(self.action_map)
+#         self.wrappers = [OneHotObsWrapper]
+#
+
+# class PongAdversarial:
+#     def __init__(self):
+#         self.gym_env_string = 'PymunkPong-v0'
+#         self.downsample_image_size = (100, 80)
+#         self.features = 100 * 80
+#         self.hidden = 200
+#         self.action_map = [0, 1, 2]
+#         self.default_action = 2
+#         self.discount_factor = 0.99
+#         self.max_rollout_len = 1000
+#         self.players = 2
+#         self.default_save = ['saved/adv_pong.wgt']
+#
+#     def construct_dataset(self):
+#         return data.BufferedRolloutDataset(self.discount_factor, transform=self.transform)
+#
+#     def prepro(self, t1, t0):
+#         def reduce(observation):
+#             greyscale = cv2.cvtColor(observation, cv2.COLOR_BGR2GRAY)
+#             greyscale = cv2.resize(greyscale, self.downsample_image_size, cv2.INTER_LINEAR)
+#             return greyscale
+#
+#         t1 = reduce(t1)
+#         t0 = reduce(t0)
+#         return t1 - t0
+#
+#     def transform(self, observation, insert_batch=False):
+#         observation_t = to_tensor(np.expand_dims(observation, axis=2)).view(self.features)
+#         if insert_batch:
+#             observation_t = observation_t.unsqueeze(0)
+#         return observation_t
 
 
-class MountainCar(DiscreteConfig):
-    def __init__(self):
-        gym_string = 'MountainCar-v0'
-        env = gym.make(gym_string)
-        dtype = env.reset().dtype
-        super().__init__(
-            features=env.observation_space.shape[0],
-            features_dtype=dtype,
-            gym_env_string=gym_string,
-            action_map=[n for n in range(env.action_space.n)]
-        )
-        self.hidden = 8
-        self.adversarial = False
-        self.players = 1
+# class AlphaDroneRacer:
+#     def __init__(self):
+#         self.gym_env_string = 'AlphaRacer2D-v0'
+#         self.features = 14
+#         self.hidden = 14
+#         self.action_map = [0, 1, 2, 3]
+#         self.default_action = 0
+#         self.discount_factor = 0.99
+#         self.max_rollout_len = 900
+#         self.adversarial = False
+#         self.default_save = ['saved/alpha_oscilating.wgt']
+#         self.players = 1
+#
+#     def prepro(self, observation_t1, observation_t0):
+#         return np.concatenate((observation_t1, observation_t0))
+#
+#     def transform(self, observation, insert_batch=False):
+#         """
+#         :param observation: the raw observation
+#         :param insert_batch: add a batch dimension to the front
+#         :return: tensor in shape (batch, dims)
+#         """
+#         if insert_batch:
+#             return torch.from_numpy(observation).float().unsqueeze(0)
+#         else:
+#             return torch.from_numpy(observation).float()
 
-
-class MountainCarValue(DiscreteConfig):
-    def __init__(self):
-        gym_string = 'MountainCar-v0'
-        env = gym.make(gym_string)
-        dtype = env.reset().dtype
-        super().__init__(
-            features=env.observation_space.shape[0],
-            features_dtype=dtype,
-            gym_env_string=gym_string,
-            action_map=[n for n in range(env.action_space.n)]
-        )
-        self.hidden = 8
-        self.adversarial = False
-        self.players = 1
-        self.action_transform = models.OneHotDiscreteActionTransform(self.action_map)
-
-
-class OneHotObsWrapper(gym.ObservationWrapper):
-    """
-    converts discrete observations to one-hot vectors
-    """
-    def __init__(self, env):
-        super().__init__(env)
-        self.observation_space.shape = (self.env.observation_space.n, )
-
-    def observation(self, observation):
-        one_hot = np.zeros(self.env.observation_space.n, dtype=np.float)
-        one_hot[observation] = 1.0
-        return one_hot
-
-
-class FrozenLakeValue(DiscreteConfig):
-    def __init__(self):
-        gym_string = 'FrozenLake-v0'
-        env = gym.make(gym_string)
-        env = OneHotObsWrapper(env)
-        dtype = env.reset().dtype
-        super().__init__(
-            features=env.observation_space.shape[0],
-            features_dtype=dtype,
-            gym_env_string=gym_string,
-            action_map=[n for n in range(env.action_space.n)],
-            prepro=NoPrePro()
-        )
-        self.hidden = 8
-        self.adversarial = False
-        self.players = 1
-        self.action_transform = models.OneHotDiscreteActionTransform(self.action_map)
-        self.wrappers = [OneHotObsWrapper]
-
-
-class PongAdversarial:
-    def __init__(self):
-        self.gym_env_string = 'PymunkPong-v0'
-        self.downsample_image_size = (100, 80)
-        self.features = 100 * 80
-        self.hidden = 200
-        self.action_map = [0, 1, 2]
-        self.default_action = 2
-        self.discount_factor = 0.99
-        self.max_rollout_len = 1000
-        self.players = 2
-        self.default_save = ['saved/adv_pong.wgt']
-
-    def construct_dataset(self):
-        return data.BufferedRolloutDataset(self.discount_factor, transform=self.transform)
-
-    def prepro(self, t1, t0):
-        def reduce(observation):
-            greyscale = cv2.cvtColor(observation, cv2.COLOR_BGR2GRAY)
-            greyscale = cv2.resize(greyscale, self.downsample_image_size, cv2.INTER_LINEAR)
-            return greyscale
-
-        t1 = reduce(t1)
-        t0 = reduce(t0)
-        return t1 - t0
-
-    def transform(self, observation, insert_batch=False):
-        observation_t = to_tensor(np.expand_dims(observation, axis=2)).view(self.features)
-        if insert_batch:
-            observation_t = observation_t.unsqueeze(0)
-        return observation_t
-
-
-class AlphaDroneRacer:
-    def __init__(self):
-        self.gym_env_string = 'AlphaRacer2D-v0'
-        self.features = 14
-        self.hidden = 14
-        self.action_map = [0, 1, 2, 3]
-        self.default_action = 0
-        self.discount_factor = 0.99
-        self.max_rollout_len = 900
-        self.adversarial = False
-        self.default_save = ['saved/alpha_oscilating.wgt']
-        self.players = 1
-
-    def construct_dataset(self):
-        return SingleProcessDataSet(self)
-
-    def prepro(self, observation_t1, observation_t0):
-        return np.concatenate((observation_t1, observation_t0))
-
-    def transform(self, observation, insert_batch=False):
-        """
-        :param observation: the raw observation
-        :param insert_batch: add a batch dimension to the front
-        :return: tensor in shape (batch, dims)
-        """
-        if insert_batch:
-            return torch.from_numpy(observation).float().unsqueeze(0)
-        else:
-            return torch.from_numpy(observation).float()
-
-
-class Bouncer:
-    def __init__(self):
-        self.gym_env_string = 'Bouncer-v0'
-        self.features = 8
-        self.hidden = 8
-        self.action_map = [0, 1, 2, 3, 4]
-        self.default_action = 0
-        self.discount_factor = 0.99
-        self.max_rollout_len = 900
-        self.adversarial = False
-        self.default_save = ['saved/bouncer.wgt']
-        self.players = 1
-
-    def construct_dataset(self):
-        return SingleProcessDataSet(self)
-
-    def prepro(self, observation_t1, observation_t0):
-        return np.concatenate((observation_t1, observation_t0))
-
-    def transform(self, observation, insert_batch=False):
-        """
-        :param observation: the raw observation
-        :param insert_batch: add a batch dimension to the front
-        :return: tensor in shape (batch, dims)
-        """
-        if insert_batch:
-            return torch.from_numpy(observation).float().unsqueeze(0)
-        else:
-            return torch.from_numpy(observation).float()
-
-
-default = CartPole()
-
-
+# default = CartPole()

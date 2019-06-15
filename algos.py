@@ -7,7 +7,6 @@ os.environ['GPU_DEBUG'] = '0'
 import torch
 from torch import tensor
 
-from configs import AlgoConfig
 from util import Converged
 from torch.utils.data import DataLoader
 import logging
@@ -19,8 +18,18 @@ if gpu_profile:
 
 logger = logging.getLogger(__name__)
 from time import time
-from data import *
+from data.data import SARAdvantageDataset, SARSDataset
 from models import *
+
+
+class AlgoConfig:
+    def __init__(self, algo_class, **kwargs):
+        self.clazz = algo_class
+        self.name = algo_class.__name__
+        self.kwargs = kwargs
+
+    def construct(self):
+        return self.clazz(**self.kwargs)
 
 
 def ppo_loss(newprob, oldprob, advantage, clip=0.2):
@@ -67,9 +76,10 @@ def ppo_loss_log(newlogprob, oldlogprob, advantage, clip=0.2):
 
 
 class PurePPOClipConfig(AlgoConfig):
-    def __init__(self, optimizer, ppo_steps_per_batch):
+    def __init__(self, optimizer, discount_factor=0.99, ppo_steps_per_batch=10):
         super().__init__(PurePPOClip)
         self.optimizer = optimizer
+        self.discount_factor = discount_factor
         self.ppo_steps_per_batch = ppo_steps_per_batch
 
 
@@ -79,8 +89,9 @@ class PurePPOClip:
         optim = config.algo.optimizer.construct(policy.parameters())
         policy = policy.train()
         policy = policy.to(device)
-        dataset = SARAdvantageDataset(exp_buffer, discount_factor=config.discount_factor, state_transform=config.transform,
-                                      action_transform=config.action_transform, precision=config.precision)
+        dataset = SARAdvantageDataset(exp_buffer, discount_factor=config.algo.discount_factor,
+                                      state_transform=config.data.transform,
+                                      action_transform=config.data.action_transform, precision=config.data.precision)
         loader = DataLoader(dataset, batch_size=len(dataset), shuffle=True)
 
         batches_p = 0
@@ -114,7 +125,7 @@ class PurePPOClip:
         if config.gpu_profile:
             gpu_profile(frame=sys._getframe(), event='line', arg=None)
 
-        return policy
+        return policy, policy
 
 
 class NoOptimizer(Exception):
@@ -122,62 +133,77 @@ class NoOptimizer(Exception):
 
 
 class OptimizerConfig:
-    def __init__(self, name, **kwargs):
-        self.name = name
+    def __init__(self, clazz, **kwargs):
+        self.name = clazz.__name__
+        self.clazz = clazz
         self.kwargs = kwargs
 
     def construct(self, parameters):
-        if self.name == 'Adam':
-            optim = torch.optim.Adam(params=parameters, **self.kwargs)
-
-        elif self.name == 'SGD':
-            optim = torch.optim.SGD(params=parameters, **self.kwargs)
-        else:
-            raise NoOptimizer
-
-        return optim
+        return self.clazz(params=parameters, **self.kwargs)
 
 
 class OneStepTDConfig(AlgoConfig):
-    def __init__(self, optimizer, min_change=2e-4, detections=5, detection_window=8):
+    def __init__(self, optimizer, epsilon=0.05, discount_factor=0.99, min_change=2e-4, detections=5, detection_window=8):
         super().__init__(OneStepTD)
         self.optimizer = optimizer
+        self.discount_factor = discount_factor
+        self.epsilon = epsilon
         self.min_change = min_change
         self.detections = detections
         self.detection_window = detection_window
+        self.logging_freq = 1000
 
 
 class OneStepTD:
     def __call__(self, critic, exp_buffer, config, device='cpu'):
 
         one_step_config = config.algo
-        greedy_policy = ValuePolicy(critic, GreedyDiscreteDist)
+        critic = critic.to(device)
+        greedy_policy = ValuePolicy(critic, GreedyDiscreteDist).to(device)
+        pin_memory = device == 'cuda'
         optim = one_step_config.optimizer.construct(critic.parameters())
-        dataset = SARSDataset(exp_buffer, state_transform=config.transform, action_transform=config.action_transform)
-        loader = DataLoader(dataset, batch_size=len(dataset), shuffle=True)
+        dataset = SARSDataset(exp_buffer, state_transform=config.data.transform, action_transform=config.data.action_transform)
+        loader = DataLoader(dataset, batch_size=len(dataset), shuffle=True, pin_memory=pin_memory)
         c = Converged(one_step_config.min_change, detections=one_step_config.detections,
                       detection_window=one_step_config.detection_window)
 
         loss = torch.tensor([-1.0])
+        iter = 0
 
-        while not c.converged(loss.item()):
-            logger.info(f'loss: {loss.item()}')
+        for state, action, reward, next_state, done in loader:
 
-            for state, action, reward, next_state, done in loader:
+            state = state.to(device)
+            action = action.to(device)
+            reward = reward.to(device)
+            next_state = next_state.to(device)
+            done = done.to(device)
+
+            while not c.converged(loss.item()):
+                iter += 1
 
                 zero_if_terminal = (~done).to(next_state.dtype)
-                next_action = greedy_policy(next_state).sample()
+                next_action = greedy_policy(next_state).sample().to(device)
                 next_value = critic(next_state, next_action)
-                target = reward + zero_if_terminal * config.discount_factor * next_value
+                target = reward + zero_if_terminal * config.algo.discount_factor * next_value
 
                 optim.zero_grad()
                 predicted = critic(state, action)
-                loss = torch.mean((target - predicted) ** 2)
+                error = target - predicted
+                loss = torch.mean(error ** 2)
                 loss.backward()
                 optim.step()
 
+                if iter % one_step_config.logging_freq == 0:
+                    max_error = error.abs().max()
+                    min_error = error.abs().min()
+                    mean_error = error.abs().mean()
+                    logger.info(f'loss     : {loss.item()}')
+                    logger.info(f'max_error: {max_error.item()}')
+                    logger.info(f'min_error: {min_error.item()}')
+                    logger.info(f'mean_error: {mean_error.item()}')
+
         # return an epsilon greedy policy as actor
-        return ValuePolicy(critic, EpsilonGreedyDiscreteDist, epsilon=0.2)
+        return ValuePolicy(critic, EpsilonGreedyDiscreteDist, epsilon=one_step_config.epsilon), critic
 
 
 # todo need to get rid of this somehow, just format the observation correctly, or use the transform from the config
@@ -191,7 +217,7 @@ class InprobableActionException(Exception):
 
 def train_ppo_continuous(policy, dataset, config, device='cpu'):
 
-    optim = optimizer(config, policy)
+    optim = config.optimizer(config, policy)
     policy = policy.train()
     policy = policy.to(device)
 

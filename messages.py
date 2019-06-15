@@ -103,9 +103,10 @@ class PongMessage(Message):
 
 
 class TrainMessage(Message):
-    def __init__(self, server_uuid, policy, config):
+    def __init__(self, server_uuid, actor, critic, config):
         super().__init__(server_uuid)
-        self.policy = policy
+        self.actor = actor
+        self.critic = critic
         self.config = config
 
 
@@ -122,9 +123,10 @@ class ConfigUpdateMessage(Message):
 
 
 class TrainCompleteMessage(Message):
-    def __init__(self, server_uuid, policy, config):
+    def __init__(self, server_uuid, actor, critic, config):
         super().__init__(server_uuid)
-        self.policy = policy
+        self.actor = actor
+        self.critic = critic
         self.config = config
 
 
