@@ -141,9 +141,9 @@ class BaseConfig:
         self.module_name = None
 
 
-class LunarLander(BaseConfig):
-    def __init__(self):
-        env_config = make_env_config_for('LunarLander-v2')
+class Discrete(BaseConfig):
+    def __init__(self, env_string, wrappers=None):
+        env_config = make_env_config_for(env_string, wrappers)
         critic_config = ModelConfig(SmartQTable, features=env_config.state_space_shape[0], actions=env_config.actions,
                                     resnet_layers=1)
         random_policy_config = ModelConfig(RandomDiscretePolicy, env_config.actions)
@@ -167,9 +167,9 @@ class GymContinuousConfig(EnvConfig):
         self.default_action = np.zeros(env.action_space.shape)
 
 
-class HalfCheetah(BaseConfig):
-    def __init__(self):
-        env_config = make_env_config_for('RoboschoolHalfCheetah-v1')
+class Continuous(BaseConfig):
+    def __init__(self, env_string, wrappers=None):
+        env_config = make_env_config_for(env_string, wrappers)
         critic_config = ModelConfig(MultiPolicyNetContinuous, env_config.state_space_shape[0],
                                     env_config.action_space_shape[0], env_config.state_space_shape[0])
         random_policy_config = ModelConfig(RandomContinuousPolicy, env_config.action_space_shape)

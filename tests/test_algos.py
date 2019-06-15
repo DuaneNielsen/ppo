@@ -2,7 +2,7 @@ import data.prepro
 from data.transforms import DefaultTransform, OneHotDiscreteActionTransform, DiscreteActionTransform
 import configs
 from algos import *
-import gym
+import gym, tests.envs
 from gym.wrappers import TimeLimit
 from util import UniImageViewer
 from rollout import single_episode
@@ -10,12 +10,13 @@ from data import Db
 from statistics import mean
 
 import logging
+
 logger = logging.getLogger(__name__)
 logging.basicConfig(format='%(levelname)s-%(module)s-%(message)s', level=logging.INFO)
 
 
-def rollout_policy(num_episodes, policy, config, capsys=None, render=False, render_freq=1, redis_host='localhost', redis_port=6379):
-
+def rollout_policy(num_episodes, policy, config, capsys=None, render=False, render_freq=1, redis_host='localhost',
+                   redis_port=6379):
     policy = policy.eval()
     policy = policy.to('cpu')
     db = Db(host=redis_host, port=redis_port, db=1)
@@ -33,42 +34,40 @@ def rollout_policy(num_episodes, policy, config, capsys=None, render=False, rend
     logger.info(f'ave reward {mean(rewards)}')
     return rollout
 
-def test_ppo_clip_discrete():
 
-    config = configs.LunarLander()
+def test_ppo_clip_discrete():
+    config = configs.Discrete('LunarLander-v2')
     optimizer = OptimizerConfig(torch.optim.SGD, lr=0.1)
     config.algo = PurePPOClipConfig(optimizer, ppo_steps_per_batch=10)
     config.data.action_transform = DiscreteActionTransform(config.env.action_map)
-    model = configs.ModelConfig(MultiPolicyNet, config.env.features_shape[0], config.env.actions,
-                                hidden=config.env.features_shape[0])
+    model = configs.ModelConfig(MultiPolicyNet, config.env.state_space_shape[0], config.env.actions,
+                                hidden=config.env.state_space_shape[0])
     config.critic = model
     policy_net = PPOWrapModel(config.critic.construct())
     ppo = config.algo.construct()
 
     for epoch in range(3):
-
         exp_buffer = rollout_policy(10, policy_net, config)
         policy_net, critic = ppo(policy_net, exp_buffer, config)
         assert True
 
 
 def test_ppo_clip_continuous(capsys):
-
-    config = configs.HalfCheetah()
+    config = configs.Continuous('RoboschoolHalfCheetah-v1')
     policy_net = PPOWrapModel(config.critic.construct())
     algo = config.algo.construct()
 
     for epoch in range(3):
-
         exp_buffer = rollout_policy(10, policy_net, config, capsys)
         policy_net, critic = algo(policy_net, exp_buffer, config)
 
 
-class LineWalk(configs.GymDiscreteConfig):
+class LineWalk(configs.Discrete):
     def __init__(self):
-        super().__init__('LineWalk-v0')
-        self.action_transform = OneHotDiscreteActionTransform(self.action_map)
-        self.prepro = data.prepro.NoPrePro()
+        wrappers = [TimeLimit]
+        super().__init__('LineWalk-v0', wrappers)
+        self.data.action_transform = OneHotDiscreteActionTransform(self.env.action_map)
+        self.data.prepro = data.prepro.NoPrePro()
 
 
 def q_table(obs_size, action_size):
@@ -100,7 +99,7 @@ def test_policy(capsys):
     qfunc = DummyQfunc()
     policy = ValuePolicy(qfunc, EpsilonGreedyDiscreteDist, epsilon=0.00)
     exp_buffer = rollout_policy(1, policy, config, capsys)
-    dataset = SARSDataset(exp_buffer, state_transform=DefaultTransform(), action_transform=config.action_transform)
+    dataset = SARSDataset(exp_buffer, state_transform=DefaultTransform(), action_transform=config.data.action_transform)
 
     assert len(exp_buffer) == 4
     assert len(dataset) == 3
@@ -124,19 +123,21 @@ def test_policy(capsys):
     assert reward == 1.0
 
 
-class Bandit(configs.GymDiscreteConfig):
+class Bandit(configs.Discrete):
     def __init__(self):
-        super().__init__('Bandit-v0')
-        self.action_transform = OneHotDiscreteActionTransform(self.action_map)
-        self.prepro = data.prepro.NoPrePro()
+        wrappers = [TimeLimit]
+        super().__init__('Bandit-v0', wrappers)
+        self.data.action_transform = OneHotDiscreteActionTransform(self.env.action_map)
+        self.data.prepro = data.prepro.NoPrePro()
 
 
 def test_policy_with_bandit(capsys):
     config = Bandit()
-    qfunc = QMLP(config.features, len(config.action_map), config.features + len(config.action_map))
+    qfunc = QMLP(config.env.state_space_shape[0], len(config.env.action_map),
+                 config.env.state_space_shape[0] + len(config.env.action_map))
     policy = ValuePolicy(qfunc, EpsilonGreedyDiscreteDist, epsilon=0.1)
     exp_buffer = rollout_policy(1, policy, config, capsys)
-    dataset = SARSDataset(exp_buffer, state_transform=DefaultTransform(), action_transform=config.action_transform)
+    dataset = SARSDataset(exp_buffer, state_transform=DefaultTransform(), action_transform=config.data.action_transform)
 
     assert len(dataset) == 1
     state, action, reward, nxt, done = dataset[0]
@@ -145,12 +146,10 @@ def test_policy_with_bandit(capsys):
 
 def test_one_step_td(capsys):
     config = Bandit()
-    config.optimizer = 'SGD'
-    optimizer = OptimizerConfig('SGD', lr=0.1)
+    optimizer = OptimizerConfig(torch.optim.SGD, lr=0.1)
     config.algo = OneStepTDConfig(optimizer)
-    config.wrappers.append(TimeLimit)
-    #qfunc = QMLP(config.features, len(config.action_map), config.features + len(config.action_map))
-    qfunc = QTable(config.features, len(config.action_map))
+    # qfunc = QMLP(config.features, len(config.action_map), config.features + len(config.action_map))
+    qfunc = QTable(config.env.state_space_shape[0], len(config.env.action_map))
     one_step_td = OneStepTD()
     policy = ValuePolicy(qfunc, EpsilonGreedyDiscreteDist, epsilon=0.3)
 
@@ -179,14 +178,13 @@ def test_one_step_td(capsys):
 
 def test_one_step_td_linewalk(capsys):
     config = LineWalk()
-    optimizer = OptimizerConfig('SGD', lr=0.1)
+    optimizer = OptimizerConfig(torch.optim.SGD, lr=0.1)
     config.algo = OneStepTDConfig(optimizer)
-    config.wrappers.append(TimeLimit)
-    qfunc = QTable(config.features, len(config.action_map))
-    one_step_td = OneStepTD()
+    qfunc = QTable(config.env.state_space_shape[0], len(config.env.action_map))
+    one_step_td = config.algo.construct()
 
     policy = ValuePolicy(qfunc, EpsilonGreedyDiscreteDist, epsilon=0.3)
-    states, actions = q_table(config.features, config.actions)
+    states, actions = q_table(config.env.state_space_shape[0], config.env.actions)
     values = policy.qf(states, actions)
     for i in range(2, 4):
         logger.info(f'{states[i]}, {actions[i]}, {values[i]}')
@@ -195,7 +193,7 @@ def test_one_step_td_linewalk(capsys):
         exp_buffer = rollout_policy(100, policy, config, capsys)
         policy, qfunc = one_step_td(qfunc, exp_buffer, config)
 
-        states, actions = q_table(config.features, config.actions)
+        states, actions = q_table(config.env.state_space_shape[0], config.env.actions)
         values = policy.qf(states, actions)
         test_policy = ValuePolicy(policy.qf, GreedyDiscreteDist)
         for i in range(0, 6):
@@ -205,7 +203,7 @@ def test_one_step_td_linewalk(capsys):
 
 
 def test_one_step_td_LunarLander(capsys):
-    config = configs.LunarLander()
+    config = configs.Discrete('LunarLander-v2')
     algo = config.algo.construct()
     actor = config.random_policy.construct()
     critic = config.critic.construct()
