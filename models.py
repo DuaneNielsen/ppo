@@ -4,7 +4,6 @@ from torch.nn import functional as NN
 from torch.distributions import *
 import copy
 from messages import ModuleHandler
-
 import logging
 
 logger = logging.getLogger(__name__)
@@ -163,9 +162,6 @@ class SmartQTable(nn.Module):
         return self.qt(hidden_state, action)
 
 
-ModuleHandler.handles(SmartQTable)
-
-
 class GreedyDiscreteDist:
     def __init__(self, probs):
         self.probs = probs
@@ -256,9 +252,6 @@ class ValuePolicy(nn.Module):
         return self.dist_class(probs, **self.kwargs)
 
 
-ModuleHandler.handles(ValuePolicy)
-
-
 class ExplodedGradient(Exception):
     pass
 
@@ -324,15 +317,11 @@ class MultiPolicyNetContinuousV2(nn.Module):
         return mu
 
 
-ModuleHandler.handles(MultiPolicyNetContinuousV2)
-
-
 class PPOWrapModel(nn.Module):
     def __init__(self, model):
         super().__init__()
         self.old = copy.deepcopy(model)
         self.new = model
-        self.features = model.features
 
     def forward(self, input, old=False):
         if old:
@@ -350,17 +339,11 @@ class PPOWrapModel(nn.Module):
         self.old.load_state_dict(self.new.state_dict())
 
 
-# this is needed to make the model serializable
-# a small price to pay for jsonpickle messages
-# ModuleHandler.handles(PPOWrapModel)
-
-
 class PPOWrap(nn.Module):
     def __init__(self, features, action_map, hidden=200):
         super().__init__()
         self.old = MultiPolicyNet(features, action_map, hidden)
         self.new = MultiPolicyNet(features, action_map, hidden)
-        self.features = features
 
     def forward(self, input, old=False):
         if old:

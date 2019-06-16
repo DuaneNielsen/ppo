@@ -34,12 +34,16 @@ class PolicyStore(PolicyBaseModel):
     run = CharField()
     run_state = CharField()
     timestamp = TimestampField(resolution=10 ** 6)
-    env_string = CharField()
+    env_name = CharField()
+    algo = CharField()
     iteration = IntegerField()
     reservoir = BooleanField(default=False)
     best = BooleanField(default=False)
     stats = JSONField()
-    policy = PickleField()
+    actor_name = CharField()
+    actor = PickleField()
+    critic_name = CharField()
+    critic = PickleField()
     config_b = PickleField()
 
 
@@ -58,16 +62,20 @@ class PolicyDB:
         else:
             return 1
 
-    def write_policy(self, run, run_state, policy_state_dict, stats, config):
+    def write_policy(self, run, run_state, actor_state_dict, critic_state_dict, stats, config):
         row = PolicyStore()
         row.run = run
-        row.env_string = config.gym_env_string
+        row.env_name = config.env.name
+        row.algo = config.algo.name
         row.run_state = run_state
         row.iteration = self.calc_next_iteration(run)
         row.stats = stats
         row.config_b = config
         row.timestamp = datetime.now()
-        row.policy = policy_state_dict
+        row.actor_name = config.actor.name
+        row.actor = actor_state_dict
+        row.critic_name = config.critic.name
+        row.critic = critic_state_dict
         return row.save()
 
     def get_latest(self, run=None):
@@ -81,12 +89,12 @@ class PolicyDB:
 
     def get_best(self, env_string=None, run=None):
         if env_string is not None and run is not None:
-            return PolicyStore.select().where((PolicyStore.env_string == env_string) &
+            return PolicyStore.select().where((PolicyStore.env_name == env_string) &
                                               (PolicyStore.run == run)). \
                 order_by(PolicyStore.stats['ave_reward_episode'])
 
         if env_string is not None and run is None:
-            return PolicyStore.select().where(PolicyStore.env_string == env_string). \
+            return PolicyStore.select().where(PolicyStore.env_name == env_string). \
                 order_by(PolicyStore.stats['ave_reward_episode'])
 
         if env_string is None and run is not None:
@@ -153,7 +161,7 @@ class PolicyDB:
         return [record.run for record in PolicyStore.select(PolicyStore.run).distinct()]
 
     def runs_for_env(self, env_string):
-        return [record.run for record in PolicyStore.select(PolicyStore.run).where(PolicyStore.env_string == env_string).distinct()]
+        return [record.run for record in PolicyStore.select(PolicyStore.run).where(PolicyStore.env_name == env_string).distinct()]
 
     def latest_run(self):
         try:

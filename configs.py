@@ -11,7 +11,8 @@ from data.transforms import DefaultTransform, ContinousActionTransform
 from data.coders import DiscreteStepCoder, AdvancedStepCoder
 import numpy as np
 import torch
-from models import SmartQTable, RandomDiscretePolicy, MultiPolicyNetContinuous, RandomContinuousPolicy
+from models import SmartQTable, RandomDiscretePolicy, MultiPolicyNetContinuous, RandomContinuousPolicy, ValuePolicy, \
+    EpsilonGreedyDiscreteDist
 
 
 class ModelConfig:
@@ -26,6 +27,18 @@ class ModelConfig:
 
     def construct(self):
         return self.clazz(*self.args, **self.kwargs)
+
+
+class ValuePolicyConfig(ModelConfig):
+    def __init__(self, qfunc_config, distrib, epsilon):
+        super().__init__(ValuePolicyConfig)
+        self.qfunc_config = qfunc_config
+        self.distrib = distrib
+        self.epsilon = epsilon
+
+    def construct(self):
+        qfunc = self.qfunc_config.construct()
+        return ValuePolicy(qfunc, self.distrib, epsilon=self.epsilon)
 
 
 class NoModel(ModelConfig):
@@ -161,11 +174,11 @@ class BaseConfig:
 class Discrete(BaseConfig):
     def __init__(self, env_string, wrappers=None):
         env_config = make_env_config_for(env_string, wrappers)
-        actor_config = NoModel()
         critic_config = ModelConfig(SmartQTable, features=env_config.state_space_shape[0], actions=env_config.actions,
                                     resnet_layers=1)
         random_policy_config = ModelConfig(RandomDiscretePolicy, env_config.actions)
         algo_config = OneStepTDConfig()
+        actor_config = ValuePolicyConfig(critic_config, EpsilonGreedyDiscreteDist, algo_config.epsilon)
         data_config = DataConfig(
             coder=DiscreteStepCoder(state_shape=env_config.state_space_shape, state_dtype=env_config.state_space_dtype),
             prepro=DefaultPrePro(),
@@ -173,7 +186,11 @@ class Discrete(BaseConfig):
             action_transform=data.transforms.OneHotDiscreteActionTransform(env_config.action_map)
         )
         gatherer_config = GatherConfig()
-        super().__init__(env_config, algo_config, random_policy_config, actor_config, critic_config, data_config, gatherer_config)
+        super().__init__(env_config, algo_config, random_policy_config, actor_config, critic_config, data_config,
+                         gatherer_config)
+
+
+default = Discrete('LunarLander-v2')
 
 
 class GymContinuousConfig(EnvConfig):
@@ -188,21 +205,21 @@ class Continuous(BaseConfig):
     def __init__(self, env_string, wrappers=None):
         env_config = make_env_config_for(env_string, wrappers)
         actor_config = ModelConfig(MultiPolicyNetContinuous, env_config.state_space_shape[0],
-                                    env_config.action_space_shape[0], env_config.state_space_shape[0])
+                                   env_config.action_space_shape[0], env_config.state_space_shape[0])
         critic_config = NoModel()
         random_policy_config = ModelConfig(RandomContinuousPolicy, env_config.action_space_shape)
         algo_config = PurePPOClipConfig()
         data_config = DataConfig(
             coder=AdvancedStepCoder(state_shape=env_config.state_space_shape, state_dtype=env_config.state_space_dtype,
-                                    action_shape=env_config.action_space_shape, action_dtype=env_config.action_space_dtype),
+                                    action_shape=env_config.action_space_shape,
+                                    action_dtype=env_config.action_space_dtype),
             prepro=DefaultPrePro(),
             transform=DefaultTransform(),
             action_transform=ContinousActionTransform()
         )
         gatherer_config = GatherConfig()
-        super().__init__(env_config, algo_config, random_policy_config, actor_config, critic_config, data_config, gatherer_config)
-
-
+        super().__init__(env_config, algo_config, random_policy_config, actor_config, critic_config, data_config,
+                         gatherer_config)
 
 
 #

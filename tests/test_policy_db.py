@@ -23,18 +23,21 @@ def db():
 
 def testPostgresWrite(db):
 
-    config = configs.LunarLander()
-    s0 = torch.randn(config.features)
-    s1 = torch.randn(config.features)
-    s = config.prepro(s0, s1).unsqueeze(0)
+    config = configs.default
+    s0 = torch.randn(config.env.state_space_shape)
+    s1 = torch.randn(config.env.state_space_shape)
+    s = config.data.prepro(s0, s1).unsqueeze(0)
 
-    model = config.model.get_model()
-    policy_net = PPOWrapModel(model)
+    actor = config.actor.construct()
+    actor = PPOWrapModel(actor)
+    critic = config.critic.construct()
 
-    a0 = policy_net(s)
+    a0 = actor(s)
 
-    policy_state_dict = policy_net.state_dict()
-    policy_net.load_state_dict(policy_state_dict)
+    actor_state_dict = actor.state_dict()
+    actor.load_state_dict(actor_state_dict)
+
+    critic_state_dict = critic.state_dict()
 
     # co = Coordinator(redis_host='localhost', redis_port=6379, redis_db=0, redis_password=None,
     #                  db_host='localhost', db_port=5432, db_name='testpython', db_user='ppo', db_password='password')
@@ -42,26 +45,28 @@ def testPostgresWrite(db):
     run = "run_id"
     run_state = 'RUNNING'
     stats = {'header': 'unittest', 'ave_reward_episode': 15.3 + random.random()}
-    db.write_policy(run, run_state, policy_state_dict, stats, config)
+    db.write_policy(run, run_state, actor_state_dict, critic_state_dict, stats, config)
     record = db.get_latest(run)
-    policy_net.load_state_dict(record.policy)
+    actor.load_state_dict(record.actor)
 
-    a1 = policy_net(s)
+    a1 = actor(s)
 
     assert record.run == run
     assert record.stats == stats
     assert a0.entropy() == a1.entropy()
-    assert record.config_b.gym_env_string == config.gym_env_string
+    assert record.config_b.env.name == config.env.name
 
 
 def write_policy(db, run, reward):
-    config = configs.LunarLander()
-    model = config.model.get_model()
-    policy_net = PPOWrapModel(model)
-    policy_state_dict = policy_net.state_dict()
+    config = configs.default
+    actor = config.actor.construct()
+    critic = config.critic.construct()
+    actor = PPOWrapModel(actor)
+    actor_state_dict = actor.state_dict()
+    critic_state_dict = critic.state_dict()
     run_state = 'RUNNING'
     stats = {'header': 'unittest', 'ave_reward_episode': reward}
-    db.write_policy(run, run_state, policy_state_dict, stats, config)
+    db.write_policy(run, run_state, actor_state_dict, critic_state_dict, stats, config)
 
 
 def test_delete(db):
