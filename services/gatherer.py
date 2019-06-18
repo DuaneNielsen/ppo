@@ -25,7 +25,7 @@ class Gatherer(Server):
         logger.debug(f'gathering for rollout: {msg.rollout_id}')
         policy = msg.policy.to('cpu').eval()
         env = msg.config.env.construct()
-        rollout = self.exp_buffer.rollout(msg.rollout_id, msg.config.data.coder)
+        rollout = self.exp_buffer.rollout(msg.rollout_id, msg.config.data.coder.construct())
         episode_number = 0
 
         while self.exp_buffer.rollout_seq.current() == msg.rollout_id and len(

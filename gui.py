@@ -12,6 +12,7 @@ from rollout import single_episode
 from policy_db import PolicyDB
 import gym
 import time
+from importlib import import_module
 
 # This design pattern simulates button callbacks
 # Note that callbacks are NOT a part of the package's interface to the
@@ -24,6 +25,7 @@ import duallog
 duallog.setup('logs', 'gui')
 
 rollout_time = None
+
 
 # todo fix status bar performance
 # todo type inference of config
@@ -159,9 +161,10 @@ def episode(msg):
 
     if update_count % 4:
         progress_map.update_bar(msg.server_uuid, msg.num_steps_per_rollout)
-        rollout = exp_buffer.latest_rollout(config)
+        rollout = exp_buffer.latest_rollout(config.data.coder)
         window.FindElement('trainer').UpdateBar(len(rollout), msg.num_steps_per_rollout)
         window.FindElement('num_steps_per_rollout').Update(msg.num_steps_per_rollout)
+
 
 def rec_rollout(msg):
     global rollout_time
@@ -196,48 +199,43 @@ def demo(run=None, best=False, num_episodes=20):
         record = policy_db.best(run.run).get()
     else:
         record = policy_db.get_latest(run.run)
-    env = gym.make(record.config_b.gym_env_string)
-    model = config.model.get_model()
-    policy_net = PPOWrapModel(model)
-    policy_net.load_state_dict(record.policy)
-    demo = DemoThread(policy_net, record.config_b, env, num_episodes=num_episodes)
+    env = gym.make(record.config_b.env.name)
+    actor = config.actor.construct()
+    actor.load_state_dict(record.actor)
+    demo = DemoThread(actor, record.config_b, env, num_episodes=num_episodes)
     demo.start()
 
 
 class DemoThread(multiprocessing.Process):
-    def __init__(self, policy, env_config, env, num_episodes=1):
+    def __init__(self, actor, config, env, num_episodes=1):
         super().__init__()
-        self.env_config = env_config
-        self.policy = policy.to('cpu').eval()
+        self.config = config
+        self.actor = actor.to('cpu').eval()
         self.num_episodes = num_episodes
         self.env = env
 
     def run(self):
         for episode_number in range(self.num_episodes):
-            logging.info(f'starting episode {episode_number} of {self.env_config.gym_env_string}')
-            single_episode(self.env, self.env_config, self.policy, render=True)
+            logging.info(f'starting episode {episode_number} of {self.config.env.name}')
+            single_episode(self.env, self.config, self.actor, render=True)
 
         self.env.close()
         logging.debug('exiting')
 
 
-def update_config(value):
-    config.num_steps_per_rollout = int(value['num_steps_per_rollout'])
-    config.optimizer = value['optimizer']
-    config.lr = float(value['lr'])
-    config.ppo_steps_per_batch = int(value['ppo_steps_per_batch'])
-    config.entropy_bonus = float(value['entropy_bonus'])
-
+def update_config(config, values):
+    config = cp.read(config, values)
+    cp.update(config)
 
 
 def filter_run(value):
-    env_string = value['FilterRun']
-    if env_string == 'all':
+    env_name = value['FilterRun']
+    if env_name == 'all':
         runs = policy_db.runs()
-    elif env_string == 'latest':
+    elif env_name == 'latest':
         runs = [policy_db.latest_run().run]
     else:
-        runs = policy_db.runs_for_env(env_string)
+        runs = policy_db.runs_for_env(env_name)
 
     best = []
     for run in runs:
@@ -249,38 +247,13 @@ def filter_run(value):
     window.FindElement('selected_run').Update(best)
 
 
-def init_run_table():
-    latest_run = policy_db.latest_run()
-    if latest_run is not None:
-        runs = [latest_run.run]
-        best = []
-        for run in runs:
-            row = policy_db.best(run).get()
-            best.append([run.ljust(25), str(row.stats['ave_reward_episode']).ljust(10)])
-        return best
-    else:
-        return [['No runs'.ljust(25), ''.ljust(10)]]
-
-
-def selected_runs(value):
-    selected_run = value['selected_run']
-    selected_runs = []
-    if selected_run is not None:
-        for index in selected_run:
-            run = window.FindElement('selected_run').Values[index][0]
-            selected_runs.append(policy_db.get_latest(run.strip()))
-
-    return selected_runs
-
-
 def refresh_config_panel():
-    for name in config_panel_names:
-        window.FindElement(name).Update(config.__dict__[name])
+    cp.update(config)
 
 
 def new_run(value):
     config = config_list[value['selected_config']]
-    config.run_id = f'{config.gym_env_string}_{random.randint(0, 1000)}'
+    config.run_id = f'{config.env.name}_{config.algo.name}_{random.randint(0, 10000)}'
     return config
 
 
@@ -325,12 +298,12 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     config_list = {
-        'CartPole-v0': configs.CartPole(),
-        'LunarLander-v2': configs.LunarLander(),
-        'Acrobot-v1': configs.Acrobot(),
-        'MountainCar-v0': configs.MountainCar(),
-        configs.HalfCheetah().gym_env_string: configs.HalfCheetah(),
-        configs.Hopper().gym_env_string: configs.Hopper()
+        'CartPole-v0': configs.Discrete('CartPole-v0'),
+        'LunarLander-v2': configs.Discrete('LunarLander-v2'),
+        'Acrobot-v1': configs.Discrete('Acrobot-v1'),
+        'MountainCar-v0': configs.Discrete('MountainCar-v0'),
+        'HalfCheetah-v1': configs.Continuous('RoboschoolHalfCheetah-v1'),
+        'Hopper-v0': configs.Continuous('RoboschoolHopper-v1')
     }
 
     r = Redis(host=args.redis_host, port=args.redis_port, password=args.redis_password)
@@ -363,53 +336,254 @@ if __name__ == '__main__':
 
     """ PROGRESS PANEL """
 
+
     def init_progressbars():
         pbars = []
         epi_counters = []
         for i in range(num_bars):
             pbars.append(
-                sg.ProgressBar(config.num_steps_per_rollout, orientation='v', size=(20, 20), key='gatherer' + str(i)))
+                sg.ProgressBar(config.gatherer.num_steps_per_rollout, orientation='v', size=(20, 20),
+                               key='gatherer' + str(i)))
             epi_counters.append(sg.Text('0', size=(3, 2), key='gatherer_epi' + str(i)))
 
         return pbars, epi_counters
+
 
     num_bars = 5
     progress_map = ProgressMap(num_bars)
 
     pbars, epi_count = init_progressbars()
 
-    progress_panel = [sg.Frame(title='progress', key='progress_panel', layout=
+    progress_panel = sg.Frame(title='progress', key='progress_panel', layout=
     [
         [sg.Text('Steps per Rollout'), sg.Text('0000000', key='num_steps_per_rollout')],
-        [sg.ProgressBar(config.num_steps_per_rollout, orientation='h', size=(20, 20), key='trainer'),
+        [sg.ProgressBar(config.gatherer.num_steps_per_rollout, orientation='h', size=(20, 20), key='trainer'),
          sg.Text('000000', key='wallclock')],
         pbars,
         epi_count
     ]
-                               )]
+                              )
+
+    """ RUN PANEL """
+
+    env_droplist_value = ['all', 'latest'] + [c for c in config_list]
+    env_droplist = sg.Drop(values=env_droplist_value, auto_size_text=True, key='FilterRun', enable_events=True,
+                           default_value='latest')
+
+
+    class PolicyTable:
+        def __init__(self, policy_db):
+            self.best = []
+            self.policy_db = policy_db
+            latest_run = self.policy_db.latest_run()
+            if latest_run is not None:
+                runs = [latest_run.run]
+                for run in runs:
+                    result = self.policy_db.best(run)
+                    if len(result) > 0:
+                        row = result.get()
+                        self.best.append([run.ljust(25), row.stats['ave_reward_episode']])
+                    else:
+                        self.best.append(['No runs'.ljust(25), ''.ljust(10)])
+            else:
+                self.best.append(['No runs'.ljust(25), ''.ljust(10)])
+
+        def update(self, value):
+            env_name = value['FilterRun']
+            if env_name == 'all':
+                runs = self.policy_db.runs()
+            elif env_name == 'latest':
+                latest_run = self.policy_db.latest_run()
+                if latest_run is not None:
+                    runs = [latest_run.run]
+                else:
+                    runs = []
+            else:
+                runs = self.policy_db.runs_for_env(env_name)
+
+
+            self.best = []
+            for run in runs:
+                row = self.policy_db.best(run).get()
+                self.best.append([run, row.stats['ave_reward_episode']])
+
+            self.best = sorted(self.best, key=lambda element: element[1], reverse=True)
+
+            window.FindElement('selected_run').Update(self.best)
+
+        def layout(self):
+            return sg.Table(self.best, headings=['run', 'ave reward'], size=(80, 10), key='selected_run')
+
+        def selected_runs(self, value):
+            selected_run = value['selected_run']
+            selected_runs = []
+            if selected_run is not None:
+                for index in selected_run:
+                    run = window.FindElement('selected_run').Values[index][0]
+                    selected_runs.append(self.policy_db.get_latest(run.strip()))
+
+            return selected_runs
+
+
+    policy_table = PolicyTable(policy_db)
+
+    run_panel = sg.Frame(title='runs', layout=
+    [
+        [env_droplist],
+        [policy_table.layout()],
+        [sg.Button('LoadConfig'),
+         sg.Button('Refresh'),
+         sg.Button('DemoBest'),
+         sg.Button('DemoLatest'),
+         sg.Button('Delete')
+         ]
+    ]
+                         )
 
     """ CONFIG PANEL """
 
 
-    def config_element(field_name):
-        try:
-            value=str(config.__dict__[field_name])
-        except KeyError:
-            value = "N/A"
+    class ConfigItemWidget:
+        def __init__(self, slot_name):
+            self.slot_name = slot_name
+            self.name = slot_name
+            self.value = 'N/A'
+            self.row = [sg.Text(slot_name, size=(20, 1)), sg.In(self.value, size=(30, 1), key=slot_name)]
+            self.empty = True
 
-        return [sg.Text(field_name, size=(20, 1)),
-                sg.In(value, size=(30, 1), key=field_name)]
+        def update(self, name, value, empty=False):
+            self.empty = empty
+            self.name = name
+            self.value = value
+            self.row[0].Update(name)
+            self.row[1].Update(str(value))
+
+        def read(self):
+            t = type(self.value)
+            self.value = t(self.row[1].Get())
+            return self.name, self.value
+
+        def layout(self):
+            return self.row
 
 
-    config_panel_names = ['run_id', 'gym_env_string', 'num_steps_per_rollout', 'model_string', 'training_algo',
-                          'discount_factor', 'episodes_per_gatherer', 'max_rollout_len', 'policy_reservoir_depth',
-                          'optimizer', 'lr', 'ppo_steps_per_batch', 'entropy_bonus']
+    class SubPanel:
+        def __init__(self, title, rows):
+            self.title = title
+            self.fields = []
+            for row in range(rows):
+                self.fields.append(ConfigItemWidget(self.title + str(row)))
 
-    config_panel_elements = []
-    for name in config_panel_names:
-        config_panel_elements.append(config_element(name))
+            self._layout = None
 
-    config_panel = [sg.Frame(title='config', layout=config_panel_elements)]
+        def is_serializable(self, obj):
+            if isinstance(obj, int) or isinstance(obj, str) or isinstance(obj, float):
+                return True
+            else:
+                return False
+
+        def update(self, config):
+            slot = 0
+            for name, value in config.__dict__.items():
+                if self.is_serializable(value):
+                    self.fields[slot].update(name, value)
+                    slot += 1
+
+            for slot in range(slot, len(self.fields)):
+                self.fields[slot].update('empty', 'N/A', empty=True)
+
+        def read(self, config):
+            for name, value in config.__dict__.items():
+                if self.is_serializable(value):
+                    for field in self.fields:
+                        if name == field.name:
+                            config.__dict__[name] = field.read()[1]
+            return config
+
+        def layout(self):
+            self._layout = [configitemwidget.layout() for configitemwidget in self.fields]
+            return sg.Frame(title=self.title, layout=self._layout)
+
+
+    class AlgoPanel(SubPanel):
+        def __init__(self, title, rows):
+            super().__init__(title, rows)
+            self.has_optim = False
+            self.optimizer_fields = []
+            self.torch_optim_module = import_module('torch.optim')
+            for row in range(5):
+                self.optimizer_fields.append(ConfigItemWidget(self.title + '_optim' + str(row)))
+
+        def update(self, config):
+            super().update(config)
+            self.has_optim = 'optimizer' in config.__dict__
+            if self.has_optim:
+                optimizer = config.__dict__['optimizer']
+                self.optimizer_fields[0].update('optim_class', optimizer.clazz.__qualname__)
+                slot = 1
+                for kwname, kwvalue in optimizer.kwargs.items():
+                    if self.is_serializable(kwvalue):
+                        self.optimizer_fields[slot].update(kwname, kwvalue)
+                        slot += 1
+                for slot in range(slot, len(self.optimizer_fields)):
+                    self.optimizer_fields[slot].update('empty', 'N/A', empty=True)
+
+        def read(self, config):
+            if self.has_optim:
+                optim_clazz_name = self.optimizer_fields[0].read()[1]
+                optim_clazz = getattr(self.torch_optim_module, optim_clazz_name)
+                for field in self.optimizer_fields[1:]:
+                    if not field.empty:
+                        kw_name, kwvalue = field.read()
+                        config.optimizer.kwargs[kw_name] = kwvalue
+                config.optimizer = configs.OptimizerConfig(optim_clazz, **config.optimizer.kwargs)
+            return super().read(config)
+
+        def layout(self):
+            super().layout()
+            for configitemwidget in self.optimizer_fields:
+                self._layout.append(configitemwidget.row)
+            return sg.Frame(title=self.title, layout=self._layout)
+
+
+    class ConfigPanel:
+        def __init__(self):
+            self.base = SubPanel('run', 10)
+            self.gatherer = SubPanel('gatherer', 10)
+            self.env = SubPanel('env', 10)
+            self.algo = AlgoPanel('algo', 10)
+
+        def update(self, config):
+            self.base.update(config)
+            self.env.update(config.env)
+            self.gatherer.update(config.gatherer)
+            self.algo.update(config.algo)
+
+        def read(self, config, values):
+            from copy import copy
+            orig_config = copy(config)
+            self.base.read(config)
+            self.gatherer.read(config.gatherer)
+            self.algo.read(config.algo)
+            self.env.read(config.gatherer)
+            return config
+
+        def layout(self):
+            line1 = []
+            line2 = []
+            # line1.append(sg.Column([[self.base.frame()], [self.env.frame()]]))
+            line1.append(self.base.layout())
+            line1.append(self.gatherer.layout())
+            line1.append(self.env.layout())
+            line1.append(self.algo.layout())
+            return line1, line2
+
+
+    cp = ConfigPanel()
+
+    view = config.view()
+
+    config_panel_l1, config_panel_l2 = cp.layout()
 
     """ NEW RUN PANEL """
 
@@ -421,35 +595,12 @@ if __name__ == '__main__':
     ]
                               )]
 
-    """ RUN PANEL """
-
-    env_droplist_value = ['all', 'latest'] + [c for c in config_list]
-    env_droplist = sg.Drop(values=env_droplist_value, auto_size_text=True, key='FilterRun', enable_events=True,
-                           default_value='latest')
-    policy_table = sg.Table(init_run_table(),
-                            headings=['run', 'ave reward'], size=(80, 10), key='selected_run')
-
-    run_panel = [sg.Frame(title='runs', layout=
-    [
-        [env_droplist],
-        [policy_table],
-        [sg.Button('LoadConfig'),
-         sg.Button('Refresh'),
-         sg.Button('DemoBest'),
-         sg.Button('DemoLatest'),
-         sg.Button('Delete')
-         ]
-    ]
-                          )]
-
-
-
     # Layout the design of the GUI
     layout = [
-        progress_panel,
+        [progress_panel, run_panel],
         new_run_panel,
-        config_panel,
-        run_panel,
+        config_panel_l1,
+        config_panel_l2,
         [sg.Button('Start'),
          sg.Button('Stop'),
          sg.Button('Demo'),
@@ -459,7 +610,9 @@ if __name__ == '__main__':
 
     # Show the Window to the user
     window = sg.Window('Control Panel').Layout(layout)
+    window.Finalize()
 
+    cp.update(config)
 
     heartbeat_freq = 2
     time_last_beat = time.time()
@@ -477,19 +630,19 @@ if __name__ == '__main__':
         if event != '__TIMEOUT__':
             print(event)
         if event == 'Start':
-            update_config(value)
+            update_config(config, value)
             start(config)
         elif event == 'Stop':
             stop()
         elif event == 'Demo':
             demo()
         elif event == 'UpdateConfig':
-            update_config(value)
+            update_config(config, value)
             ConfigUpdateMessage(gui_uuid, config).send(r)
         elif event == 'FilterRun':
-            filter_run(value)
+            policy_table.update(value)
         elif event == 'LoadConfig':
-            selected = selected_runs(value)
+            selected = policy_table.selected_runs(value)
             if len(selected) == 1:
                 config = selected[0].config_b
                 refresh_config_panel()
@@ -497,19 +650,19 @@ if __name__ == '__main__':
             config = new_run(value)
             refresh_config_panel()
         elif event == 'Refresh':
-            filter_run(value)
+            policy_table.update(value)
         elif event == 'DemoBest':
-            selected = selected_runs(value)
+            selected = policy_table.selected_runs(value)
             if len(selected) == 1:
                 demo(selected[0], best=True)
 
         elif event == 'DemoLatest':
-            selected = selected_runs(value)
+            selected = policy_table.selected_runs(value)
             if len(selected) == 1:
                 demo(selected[0])
 
         elif event == 'Delete':
-            selected = selected_runs(value)
+            selected = policy_table.selected_runs(value)
             for run in selected:
                 policy_db.delete(run.run)
             filter_run(value)

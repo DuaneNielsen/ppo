@@ -4,9 +4,6 @@ import os
 os.environ['CUDA_VISIBLE_DEVICES'] = '0'
 os.environ['GPU_DEBUG'] = '0'
 
-import torch
-from torch import tensor
-
 from util import Converged
 from torch.utils.data import DataLoader
 import logging
@@ -22,33 +19,7 @@ from data.data import SARAdvantageDataset, SARSDataset
 from models import *
 
 
-class NoOptimizer(Exception):
-    pass
-
-
-class OptimizerConfig:
-    def __init__(self, clazz, **kwargs):
-        self.name = clazz.__name__
-        self.clazz = clazz
-        self.kwargs = kwargs
-
-    def construct(self, parameters):
-        return self.clazz(params=parameters, **self.kwargs)
-
-
 # default optimizers
-adam = OptimizerConfig(torch.optim.Adam, lr=1e-3)
-sgd = OptimizerConfig(torch.optim.SGD, lr=0.1)
-
-
-class AlgoConfig:
-    def __init__(self, algo_class, **kwargs):
-        self.clazz = algo_class
-        self.name = algo_class.__name__
-        self.kwargs = kwargs
-
-    def construct(self):
-        return self.clazz(**self.kwargs)
 
 
 def ppo_loss(newprob, oldprob, advantage, clip=0.2):
@@ -94,23 +65,20 @@ def ppo_loss_log(newlogprob, oldlogprob, advantage, clip=0.2):
     return min_step.mean()
 
 
-class PurePPOClipConfig(AlgoConfig):
-    def __init__(self, optimizer=sgd, discount_factor=0.99, ppo_steps_per_batch=10):
-        super().__init__(PurePPOClip)
-        self.optimizer = optimizer
-        self.discount_factor = discount_factor
-        self.ppo_steps_per_batch = ppo_steps_per_batch
+
 
 
 class PurePPOClip:
     def __call__(self, actor, critic, exp_buffer, config, device='cpu'):
 
+        transform, action_transform = config.data.transforms()
+
         optim = config.algo.optimizer.construct(actor.parameters())
         actor = actor.train()
         actor = actor.to(device)
         dataset = SARAdvantageDataset(exp_buffer, discount_factor=config.algo.discount_factor,
-                                      state_transform=config.data.transform,
-                                      action_transform=config.data.action_transform, precision=config.data.precision)
+                                      state_transform=transform,
+                                      action_transform=action_transform, precision=config.data.precision)
         loader = DataLoader(dataset, batch_size=len(dataset), shuffle=True)
 
         batches_p = 0
@@ -147,27 +115,17 @@ class PurePPOClip:
         return actor, None
 
 
-class OneStepTDConfig(AlgoConfig):
-    def __init__(self, optimizer=adam, epsilon=0.05, discount_factor=0.99, min_change=2e-4, detections=5, detection_window=8):
-        super().__init__(OneStepTD)
-        self.optimizer = optimizer
-        self.discount_factor = discount_factor
-        self.epsilon = epsilon
-        self.min_change = min_change
-        self.detections = detections
-        self.detection_window = detection_window
-        self.logging_freq = 1000
-
-
 class OneStepTD:
     def __call__(self, actor, critic, exp_buffer, config, device='cpu'):
+
+        transform, action_transform = config.data.transforms()
 
         one_step_config = config.algo
         critic = critic.to(device)
         greedy_policy = ValuePolicy(critic, GreedyDiscreteDist).to(device)
         pin_memory = device == 'cuda'
         optim = one_step_config.optimizer.construct(critic.parameters())
-        dataset = SARSDataset(exp_buffer, state_transform=config.data.transform, action_transform=config.data.action_transform)
+        dataset = SARSDataset(exp_buffer, state_transform=transform, action_transform=action_transform)
         loader = DataLoader(dataset, batch_size=len(dataset), shuffle=True, pin_memory=pin_memory)
         c = Converged(one_step_config.min_change, detections=one_step_config.detections,
                       detection_window=one_step_config.detection_window)

@@ -1,14 +1,14 @@
 import data.prepro
+from configs import OptimizerConfig, PurePPOClipConfig, OneStepTDConfig, DataConfigItem
 from data.transforms import DefaultTransform, OneHotDiscreteActionTransform, DiscreteActionTransform
 import configs
 from algos import *
-import gym, tests.envs
 from gym.wrappers import TimeLimit
 from util import UniImageViewer
 from rollout import single_episode
 from data import Db
 from statistics import mean
-
+import tests.envs
 import logging
 
 logger = logging.getLogger(__name__)
@@ -20,7 +20,7 @@ def rollout_policy(num_episodes, policy, config, capsys=None, render=False, rend
     policy = policy.eval()
     policy = policy.to('cpu')
     db = Db(host=redis_host, port=redis_port, db=1)
-    rollout = db.create_rollout(config.data.coder)
+    rollout = db.create_rollout(config.data.coder.construct())
     v = UniImageViewer(config.env.name, (200, 160))
     env = config.env.construct()
     rewards = []
@@ -39,7 +39,7 @@ def test_ppo_clip_discrete():
     config = configs.Discrete('LunarLander-v2')
     optimizer = OptimizerConfig(torch.optim.SGD, lr=0.1)
     config.algo = PurePPOClipConfig(optimizer, ppo_steps_per_batch=10)
-    config.data.action_transform = DiscreteActionTransform(config.env.action_map)
+    config.data.action_transform = DataConfigItem(DiscreteActionTransform, config.env.action_map)
     model = configs.ModelConfig(MultiPolicyNet, config.env.state_space_shape[0], config.env.actions,
                                 hidden=config.env.state_space_shape[0])
     config.actor = model
@@ -67,8 +67,8 @@ class LineWalk(configs.Discrete):
     def __init__(self):
         wrappers = [TimeLimit]
         super().__init__('LineWalk-v0', wrappers)
-        self.data.action_transform = OneHotDiscreteActionTransform(self.env.action_map)
-        self.data.prepro = data.prepro.NoPrePro()
+        self.data.action_transform = DataConfigItem(OneHotDiscreteActionTransform, self.env.action_map)
+        self.data.prepro = DataConfigItem(data.prepro.NoPrePro)
 
 
 def q_table(obs_size, action_size):
@@ -128,8 +128,8 @@ class Bandit(configs.Discrete):
     def __init__(self):
         wrappers = [TimeLimit]
         super().__init__('Bandit-v0', wrappers)
-        self.data.action_transform = OneHotDiscreteActionTransform(self.env.action_map)
-        self.data.prepro = data.prepro.NoPrePro()
+        self.data.action_transform = DataConfigItem(OneHotDiscreteActionTransform, self.env.action_map)
+        self.data.prepro = DataConfigItem(data.prepro.NoPrePro)
 
 
 def test_policy_with_bandit(capsys):
@@ -138,7 +138,7 @@ def test_policy_with_bandit(capsys):
                  config.env.state_space_shape[0] + len(config.env.action_map))
     policy = ValuePolicy(qfunc, EpsilonGreedyDiscreteDist, epsilon=0.1)
     exp_buffer = rollout_policy(1, policy, config, capsys)
-    dataset = SARSDataset(exp_buffer, state_transform=DefaultTransform(), action_transform=config.data.action_transform)
+    dataset = SARSDataset(exp_buffer, state_transform=DefaultTransform(), action_transform=config.data.action_transform.construct())
 
     assert len(dataset) == 1
     state, action, reward, nxt, done = dataset[0]

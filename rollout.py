@@ -5,6 +5,7 @@ from copy import copy
 import logging
 logger = logging.getLogger(__name__)
 
+# todo implement prepro as an env wrapper
 
 def single_episode(env, config, policy, rollout=None, v=None, render=False, display_observation=False):
 
@@ -21,6 +22,11 @@ def single_episode(env, config, policy, rollout=None, v=None, render=False, disp
     :return:
     """
 
+    prepro = config.data.prepro.construct()
+    transform = config.data.transform.construct()
+    action_transform = config.data.action_transform.construct()
+
+
     episode = None
     if rollout is not None:
         episode = rollout.create_episode()
@@ -28,18 +34,18 @@ def single_episode(env, config, policy, rollout=None, v=None, render=False, disp
     first_obs = env.reset()
     observation_t0 = copy(first_obs)
     observation_t1 = copy(first_obs)
-    state = config.data.prepro(observation_t1, observation_t0)
+    state = prepro(observation_t1, observation_t0)
     entropy = []
 
     done = False
     while not done:
         # take an action on current observation and record result
-        state_t = config.data.transform(state, insert_batch=True)
+        state_t = transform(state, insert_batch=True)
         action_dist = policy(state_t)
 
         entropy.append(action_dist.entropy().mean().item())
 
-        action = config.data.action_transform(action_dist.sample())
+        action = action_transform(action_dist.sample())
 
         observation_t1, reward, done, info = env.step(action)
 
@@ -50,7 +56,7 @@ def single_episode(env, config, policy, rollout=None, v=None, render=False, disp
         episode_length += 1
 
         # compute the observation that resulted from our action
-        state = config.data.prepro(observation_t1, observation_t0)
+        state = prepro(observation_t1, observation_t0)
         observation_t0 = observation_t1
 
         if render:

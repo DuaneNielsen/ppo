@@ -23,7 +23,7 @@ class Trainer(Server):
 
         trainer = msg.config.algo.construct()
 
-        exp_buffer = self.db.latest_rollout(msg.config.data.coder)
+        exp_buffer = self.db.latest_rollout(msg.config.data.coder.construct())
         assert len(exp_buffer) != 0
 
         logger.info('started training')

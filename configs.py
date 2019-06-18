@@ -6,16 +6,81 @@ import gym, roboschool
 import data
 import data.transforms
 from data.prepro import DefaultPrePro, NoPrePro
-from algos import OneStepTDConfig, PurePPOClipConfig, OptimizerConfig
+from algos import PurePPOClip, OneStepTD
 from data.transforms import DefaultTransform, ContinousActionTransform
 from data.coders import DiscreteStepCoder, AdvancedStepCoder
 import numpy as np
 import torch
 from models import SmartQTable, RandomDiscretePolicy, MultiPolicyNetContinuous, RandomContinuousPolicy, ValuePolicy, \
     EpsilonGreedyDiscreteDist
+from jsonpickle.pickler import Pickler
 
 
-class ModelConfig:
+class ConfigItem:
+    pass
+
+
+class DataConfigItem(ConfigItem):
+    def __init__(self, cls, *args, **kwargs):
+        self.name = cls.__name__
+        self.cls = cls
+        self.args = args
+        self.kwargs = kwargs
+
+    def construct(self):
+        return self.cls(*self.args, **self.kwargs)
+
+
+class NoOptimizer(Exception):
+    pass
+
+
+class OptimizerConfig(ConfigItem):
+    def __init__(self, clazz, **kwargs):
+        self.name = clazz.__name__
+        self.clazz = clazz
+        self.kwargs = kwargs
+
+    def construct(self, parameters):
+        return self.clazz(params=parameters, **self.kwargs)
+
+
+adam = OptimizerConfig(torch.optim.Adam, lr=1e-3)
+sgd = OptimizerConfig(torch.optim.SGD, lr=0.1)
+
+
+class AlgoConfig(ConfigItem):
+    def __init__(self, algo_class, **kwargs):
+        self.clazz = algo_class
+        self.name = algo_class.__name__
+        self.kwargs = kwargs
+
+    def construct(self):
+        return self.clazz(**self.kwargs)
+
+
+class PurePPOClipConfig(AlgoConfig):
+    def __init__(self, optimizer=sgd, discount_factor=0.99, ppo_steps_per_batch=10):
+        super().__init__(PurePPOClip)
+        self.optimizer = optimizer
+        self.discount_factor = discount_factor
+        self.ppo_steps_per_batch = ppo_steps_per_batch
+
+
+class OneStepTDConfig(AlgoConfig):
+    def __init__(self, optimizer=adam, epsilon=0.05, discount_factor=0.99, min_change=2e-4, detections=5,
+                 detection_window=8):
+        super().__init__(OneStepTD)
+        self.optimizer = optimizer
+        self.discount_factor = discount_factor
+        self.epsilon = epsilon
+        self.min_change = min_change
+        self.detections = detections
+        self.detection_window = detection_window
+        self.logging_freq = 1000
+
+
+class ModelConfig(ConfigItem):
     def __init__(self, clazz, *args, **kwargs):
         self.clazz = clazz
         self.name = clazz.__name__
@@ -80,7 +145,7 @@ def make_connector_config_for(config):
     pass
 
 
-class EnvConfig:
+class EnvConfig(ConfigItem):
     def __init__(self, name, env):
         self.name = name
         obs = env.reset()
@@ -104,7 +169,7 @@ class GymDiscreteConfig(EnvConfig):
         self.default_action = 0
 
 
-class DataConfig:
+class DataConfig(ConfigItem):
     def __init__(self, coder, prepro, transform, action_transform):
         self.coder = coder
         self.prepro = prepro
@@ -116,19 +181,22 @@ class DataConfig:
     def precision(self):
         return eval(self._precision)
 
+    def transforms(self):
+        return self.transform.construct(), self.action_transform.construct()
 
-class GatherConfig:
+
+class GatherConfig(ConfigItem):
     def __init__(self):
         self.episode_batch_size = 1  # the number of steps to buffer in the gatherer before updating
         self.episodes_per_gatherer = 1  # number of episodes to gather before waiting for co-ordinator
         self.num_steps_per_rollout = 2000
         self.policy_reservoir_depth = 10
         self.policy_top_depth = 10
-        self.timeout = 40
+
         self.max_rollout_len = 3000  # terminate episodes that go longer than this
 
 
-class BaseConfig:
+class BaseConfig(ConfigItem):
     def __init__(self,
                  env_config,
                  algo_config,
@@ -162,6 +230,9 @@ class BaseConfig:
         # configuration of data run
         self.gatherer = gatherer_config
 
+        #timeout for system retry
+        self.timeout = 400
+
         # gpu diagnostics
         self.gpu_profile = False
         self.gpu_profile_fn = f'{datetime.datetime.now():%d-%b-%y-%H-%M-%S}-gpu_mem_prof.txt'
@@ -169,6 +240,32 @@ class BaseConfig:
         self.func_name = None
         self.filename = None
         self.module_name = None
+
+    @staticmethod
+    def recurse_view(obj):
+        view = {}
+        if isinstance(obj, dict):
+            d = obj
+        else:
+            d = obj.__dict__
+
+        for name, value in d.items():
+            if issubclass(type(value), ConfigItem):
+                view[name] = BaseConfig.recurse_view(value)
+            elif name is 'kwargs':
+                BaseConfig.recurse_view(value)
+            elif isinstance(value, str) or isinstance(value, float) or isinstance(value, int) \
+                    or isinstance(value, tuple) or isinstance(value, np.dtype) or isinstance(value, list):
+                view[name] = value
+            elif isinstance(value, type):
+                view[name] = value.__name__
+            else:
+                view[name] = type(value).__name__
+
+        return view
+
+    def view(self):
+        return Pickler().flatten(self)
 
 
 class Discrete(BaseConfig):
@@ -180,10 +277,12 @@ class Discrete(BaseConfig):
         algo_config = OneStepTDConfig()
         actor_config = ValuePolicyConfig(critic_config, EpsilonGreedyDiscreteDist, algo_config.epsilon)
         data_config = DataConfig(
-            coder=DiscreteStepCoder(state_shape=env_config.state_space_shape, state_dtype=env_config.state_space_dtype),
-            prepro=DefaultPrePro(),
-            transform=data.transforms.DefaultTransform(),
-            action_transform=data.transforms.OneHotDiscreteActionTransform(env_config.action_map)
+            coder=DataConfigItem(DiscreteStepCoder,
+                                 state_shape=env_config.state_space_shape,
+                                 state_dtype=env_config.state_space_dtype),
+            prepro=DataConfigItem(DefaultPrePro),
+            transform=DataConfigItem(data.transforms.DefaultTransform),
+            action_transform=DataConfigItem(data.transforms.OneHotDiscreteActionTransform, env_config.action_map)
         )
         gatherer_config = GatherConfig()
         super().__init__(env_config, algo_config, random_policy_config, actor_config, critic_config, data_config,
@@ -210,12 +309,14 @@ class Continuous(BaseConfig):
         random_policy_config = ModelConfig(RandomContinuousPolicy, env_config.action_space_shape)
         algo_config = PurePPOClipConfig()
         data_config = DataConfig(
-            coder=AdvancedStepCoder(state_shape=env_config.state_space_shape, state_dtype=env_config.state_space_dtype,
-                                    action_shape=env_config.action_space_shape,
-                                    action_dtype=env_config.action_space_dtype),
-            prepro=DefaultPrePro(),
-            transform=DefaultTransform(),
-            action_transform=ContinousActionTransform()
+            coder=DataConfigItem(AdvancedStepCoder,
+                                 state_shape=env_config.state_space_shape,
+                                 state_dtype=env_config.state_space_dtype,
+                                 action_shape=env_config.action_space_shape,
+                                 action_dtype=env_config.action_space_dtype),
+            prepro=DataConfigItem(DefaultPrePro),
+            transform=DataConfigItem(DefaultTransform),
+            action_transform=DataConfigItem(ContinousActionTransform)
         )
         gatherer_config = GatherConfig()
         super().__init__(env_config, algo_config, random_policy_config, actor_config, critic_config, data_config,

@@ -124,7 +124,7 @@ def test_trainer(r):
 
     config = Discrete('LunarLander-v2')
     db = Db(redis_client=r)
-    rollout = db.create_rollout(config.data.coder)
+    rollout = db.create_rollout(config.data.coder.construct())
     g = Gatherer()
     t = Trainer()
     tst = ListenTestServer(r)
