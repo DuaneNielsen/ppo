@@ -14,7 +14,7 @@ import torch
 from models import SmartQTable, RandomDiscretePolicy, MultiPolicyNetContinuous, RandomContinuousPolicy, ValuePolicy, \
     EpsilonGreedyDiscreteDist
 from jsonpickle.pickler import Pickler
-
+import algos
 
 class ConfigItem:
     pass
@@ -78,6 +78,31 @@ class OneStepTDConfig(AlgoConfig):
         self.detections = detections
         self.detection_window = detection_window
         self.logging_freq = 1000
+
+
+class BoostrapValueConfig(AlgoConfig):
+    def __init__(self, optimizer=adam, discount_factor=0.99, min_change=2e-4, detections=5,
+                 detection_window=8):
+        super().__init__(algos.BootstrapValue)
+        self.optimizer = optimizer
+        self.discount_factor = discount_factor
+        self.min_change = min_change
+        self.detections = detections
+        self.detection_window = detection_window
+        self.logging_freq = 1000
+
+
+class PPOA2CConfig(AlgoConfig):
+    def __init__(self, optimizer=adam, discount_factor=0.99, min_change=2e-4, detections=5,
+                 detection_window=8, ppo_steps_per_batch=10, logging_freq=100):
+        super().__init__(algos.PPOAC2)
+        self.optimizer = optimizer
+        self.discount_factor = discount_factor
+        self.min_change = min_change
+        self.detections = detections
+        self.detection_window = detection_window
+        self.logging_freq = logging_freq
+        self.ppo_steps_per_batch = ppo_steps_per_batch
 
 
 class ModelConfig(ConfigItem):

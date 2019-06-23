@@ -48,6 +48,16 @@ class RandomDiscretePolicy(nn.Module):
         return Categorical(probs=self.probs)
 
 
+class RandomDiscretePolicyWithOneHotOutput(nn.Module):
+    def __init__(self, actions):
+        super().__init__()
+        self.actions = actions
+        self.probs = nn.Parameter(torch.ones(actions) / actions)
+
+    def forward(self, input):
+        return OneHotCategorical(probs=self.probs)
+
+
 class RandomContinuousPolicy(nn.Module):
     def __init__(self, action_space_shape):
         super().__init__()
@@ -82,6 +92,24 @@ class MultiPolicyNet(nn.Module):
         probs = torch.exp(action_logprob)
         index = torch.argmax(probs, dim=1)
         return index
+
+
+class LookupDiscreteTestPolicy(nn.Module):
+    def __init__(self, features, actions):
+        super().__init__()
+        self.weights = nn.Parameter(torch.randn(features, actions))
+
+    def forward(self, state):
+        weight_probs = torch.softmax(self.weights, dim=1)
+        selected_probs = state.matmul(weight_probs)
+        return Categorical(probs=selected_probs)
+
+    @property
+    def probs(self):
+        return torch.softmax(self.weights, dim=1)
+
+    def __repr__(self):
+        return str(self.probs)
 
 
 class QMLP(nn.Module):
@@ -162,7 +190,57 @@ class SmartQTable(nn.Module):
         return self.qt(hidden_state, action)
 
 
-class GreedyDiscreteDist:
+class TestValueFunction(nn.Module):
+    def __init__(self, features):
+        """ simple lookup table... weights correspond to value of each state"""
+        super().__init__()
+        self.weights = nn.Parameter(torch.rand(features))
+
+    def forward(self, features):
+        return torch.sum(features * self.weights, dim=1)
+
+
+class BestValuePolicy(nn.Module):
+    def __init__(self, value_func):
+        super().__init__()
+        self.v = value_func
+
+    def forward(self, state):
+        batch_size = state.shape[0]
+        actions = state.shape[1] - 1
+        features = state.shape[2:]
+        state = state[:, 1:, :]
+        state = state.reshape(batch_size * actions, *features)
+        probs = self.v(state)
+        probs = probs.reshape(batch_size, actions)
+        probs = torch.softmax(probs, dim=1)
+        return GreedyDist(probs)
+
+
+class GreedyDist:
+    def __init__(self, probs):
+        self.probs = probs
+
+    def sample(self):
+        return torch.argmax(self.probs)
+
+    # not sure what this should actually be, below is entropy of a random draw
+    def entropy(self):
+        return torch.sum(- self.probs * torch.log2(self.probs))
+
+
+class SimpleValueFunction(nn.Module):
+    def __init__(self, features, resnet_layers=3):
+        super().__init__()
+        self.resnet = DeepResNet(features, resnet_layers)
+        self.scaling = nn.Linear(features, 1)
+
+    def forward(self, state):
+        hidden = self.resnet(state)
+        return self.scaling(hidden)
+
+
+class GreedyDiscreteOneHotDist:
     def __init__(self, probs):
         self.probs = probs
         if len(self.probs.shape) == 1:
@@ -188,6 +266,33 @@ class GreedyDiscreteDist:
 
 class OneDistOnly(Exception):
     pass
+
+
+class EpsilonGreedyFlatDiscreteDist:
+    def __init__(self, probs, epsilon=0.05):
+        if len(probs.shape) == 1:
+            self.probs = probs.unsqueeze(0)
+        else:
+            self.probs = probs
+        if self.probs.size(0) != 1:
+            logger.error('Only one discrete probability distribution at a time is currently supported')
+            raise OneDistOnly
+        self.epsilon = epsilon
+
+        e = self.epsilon / (self.probs.size(1) - 1)
+        max = torch.argmax(self.probs, dim=1)
+        self.p = torch.ones_like(self.probs) * e
+        self.p[torch.arange(self.p.size(0)), max] = 1.0 - self.epsilon
+
+    def sample(self):
+        return Categorical(self.p.squeeze(0)).sample()
+
+    def entropy(self):
+        return torch.sum(- self.probs * torch.log2(self.probs))
+
+    def logprob(self, action):
+        probs = torch.sum(self.p * action, dim=1)
+        return torch.log(probs)
 
 
 class EpsilonGreedyDiscreteDist:

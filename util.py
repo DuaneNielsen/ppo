@@ -102,13 +102,9 @@ def timeit(method):
     return timed
 
 
-
-
-
-def gpu_profile(frame, event, arg):
+def gpu_profile(frame, event, arg, func_name, filename, lineno, module_name):
     # it is _about to_ execute (!)
     global last_tensor_sizes
-    global lineno, func_name, filename, module_name
 
     if event == 'line':
         try:
@@ -188,15 +184,16 @@ class Converged:
         self.min_change = min_change
         self.detections = detections
         self.detection_window = detection_window
-        self.prev_loss = 1e12
         self.buffer = []
 
-    def converged(self, loss):
-        converging = 1.0 if abs(loss - self.prev_loss) < self.min_change else 0.0
+    def converged(self, prev, current):
+        if prev is not None and current is not None:
+            converging = 1.0 if torch.abs(prev - current).mean().item() < self.min_change else 0.0
+        else:
+            converging = 0.0
         self.buffer.append(converging)
         if len(self.buffer) > self.detection_window:
             self.buffer.pop(0)
-        self.prev_loss = loss
         return sum(self.buffer) >= self.detections
 
     def reset(self):

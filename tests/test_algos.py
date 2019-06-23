@@ -1,11 +1,11 @@
 import data.prepro
-from configs import OptimizerConfig, PurePPOClipConfig, OneStepTDConfig, DataConfigItem
+from configs import *
 from data.transforms import DefaultTransform, OneHotDiscreteActionTransform, DiscreteActionTransform
 import configs
 from algos import *
 from gym.wrappers import TimeLimit
 from util import UniImageViewer
-from rollout import single_episode
+from rollout import single_episode, single_discrete_episode_with_lookahead
 from data import Db
 from statistics import mean
 import tests.envs
@@ -33,6 +33,31 @@ def rollout_policy(num_episodes, policy, config, capsys=None, render=False, rend
     rollout.finalize()
     logger.info(f'ave reward {mean(rewards)}')
     return rollout
+
+
+def rollout_policy_with_lookahead(num_episodes, policy, config, capsys=None, render=False, render_freq=1, redis_host='localhost',
+                   redis_port=6379):
+    policy = policy.eval()
+    policy = policy.to('cpu')
+    db = Db(host=redis_host, port=redis_port, db=1)
+    rollout = db.create_rollout(config.data.coder.construct())
+    v = UniImageViewer(config.env.name, (200, 160))
+    env = config.env.construct()
+    rewards = []
+    length = []
+
+    for i in range(num_episodes):
+        render_iter = (i % render_freq == 0) and render
+        episode = single_discrete_episode_with_lookahead(env, config, policy, rollout, render=render_iter)
+        rewards.append(episode.total_reward())
+        length.append(len(episode))
+
+    rollout.finalize()
+    mean_reward = mean(rewards)
+    logger.info(f'ave reward {mean_reward}')
+    logger.info(f'ave len    {mean(length)}')
+    logger.info(f'max len    {max(length)}')
+    return rollout, mean_reward
 
 
 def test_ppo_clip_discrete():
@@ -132,13 +157,22 @@ class Bandit(configs.Discrete):
         self.data.prepro = DataConfigItem(data.prepro.NoPrePro)
 
 
+class BanditLookahead(configs.Discrete):
+    def __init__(self):
+        wrappers = [TimeLimit]
+        super().__init__('BanditLookahead-v0', wrappers)
+        self.data.action_transform = DataConfigItem(OneHotDiscreteActionTransform, self.env.action_map)
+        self.data.prepro = DataConfigItem(data.prepro.NoPrePro)
+
+
 def test_policy_with_bandit(capsys):
     config = Bandit()
     qfunc = QMLP(config.env.state_space_shape[0], len(config.env.action_map),
                  config.env.state_space_shape[0] + len(config.env.action_map))
     policy = ValuePolicy(qfunc, EpsilonGreedyDiscreteDist, epsilon=0.1)
     exp_buffer = rollout_policy(1, policy, config, capsys)
-    dataset = SARSDataset(exp_buffer, state_transform=DefaultTransform(), action_transform=config.data.action_transform.construct())
+    dataset = SARSDataset(exp_buffer, state_transform=DefaultTransform(),
+                          action_transform=config.data.action_transform.construct())
 
     assert len(dataset) == 1
     state, action, reward, nxt, done = dataset[0]
@@ -165,7 +199,7 @@ def test_one_step_td(capsys):
 
         states, actions = q_table(3, 2)
         values = policy.qf(states, actions)
-        test_policy = ValuePolicy(policy.qf, GreedyDiscreteDist)
+        test_policy = ValuePolicy(policy.qf, GreedyDiscreteOneHotDist)
         for i in range(2, 4):
             action = test_policy(states[i].unsqueeze(0)).sample()
             logger.info(f'{states[i]}, {actions[i]}, {values[i]}, {action}')
@@ -196,7 +230,7 @@ def test_one_step_td_linewalk(capsys):
 
         states, actions = q_table(config.env.state_space_shape[0], config.env.actions)
         values = policy.qf(states, actions)
-        test_policy = ValuePolicy(policy.qf, GreedyDiscreteDist)
+        test_policy = ValuePolicy(policy.qf, GreedyDiscreteOneHotDist)
         for i in range(0, 6):
             action = test_policy(states[i].unsqueeze(0)).sample()
             logger.info(f'{states[i]}, {actions[i]}, {values[i]}, {action}')
@@ -212,3 +246,110 @@ def test_one_step_td_LunarLander(capsys):
     for epoch in range(10):
         exp_buffer = rollout_policy(50, actor, config, capsys, render=True, render_freq=50)
         actor, critic = algo(None, critic, exp_buffer, config, device='cuda')
+
+
+def testBootstrapValuewithBandit(capsys):
+    config = Bandit()
+    optimizer = OptimizerConfig(torch.optim.SGD, lr=0.1)
+    config.algo = BoostrapValueConfig(optimizer=optimizer)
+    config.critic = ModelConfig(TestValueFunction, features=config.env.state_space_shape[0])
+    critic = config.critic.construct()
+    config.actor = ModelConfig(BestValuePolicy, critic)
+    config.data.action_transform = DataConfigItem(DiscreteActionTransform, config.env.action_map)
+    actor = critic
+
+    algo = config.algo.construct()
+
+    print(critic.weights)
+
+    for epoch in range(20):
+        config.data.transform = DataConfigItem(data.transforms.DefaultTransform)
+        exp_buffer, mean_reward = rollout_policy_with_lookahead(1, actor, config, capsys, render=False)
+        actor, critic = algo(critic, critic, exp_buffer, config, device='cuda')
+
+        print(critic.weights)
+
+
+def testBootstrapValuewithLineWalk(capsys):
+    config = LineWalk()
+    optimizer = OptimizerConfig(torch.optim.SGD, lr=0.1)
+    config.algo = BoostrapValueConfig(optimizer=optimizer, min_change=0.0002)
+    config.algo.logging_freq = 10
+    config.critic = ModelConfig(TestValueFunction, features=config.env.state_space_shape[0])
+    critic = config.critic.construct()
+    config.actor = ModelConfig(BestValuePolicy, critic)
+    config.data.action_transform = DataConfigItem(DiscreteActionTransform, config.env.action_map)
+    actor = critic
+
+    algo = config.algo.construct()
+
+    logger.info(critic.weights.data)
+    mean_reward = 0
+
+    while mean_reward < 1.0:
+        config.data.transform = DataConfigItem(data.transforms.DefaultTransform)
+        exp_buffer, mean_reward = rollout_policy_with_lookahead(10, actor, config, capsys, render=False)
+        actor, critic = algo(critic, critic, exp_buffer, config, device='cuda')
+
+
+        logger.info(critic.weights.data)
+
+
+def testPPOA2CwithBandit(capsys):
+    config = Bandit()
+    optimizer = OptimizerConfig(torch.optim.SGD, lr=0.05)
+    config.algo = PPOA2CConfig(optimizer=optimizer)
+    config.critic = ModelConfig(TestValueFunction, features=config.env.state_space_shape[0])
+    config.actor = ModelConfig(LookupDiscreteTestPolicy, config.env.state_space_shape[0], config.env.actions)
+    config.data.action_transform = DataConfigItem(DiscreteActionTransform, config.env.action_map)
+
+    algo = config.algo.construct()
+    actor = PPOWrapModel(config.actor.construct())
+    critic = config.critic.construct()
+
+    for epoch in range(20):
+        exp_buffer = rollout_policy(50, actor, config, capsys, render=False)
+        actor, critic = algo(actor, critic, exp_buffer, config, device='cuda')
+        #print(critic.weights.data)
+        print(actor.new.probs.data[1])
+
+
+def testPPOA2CwithLineWalk(capsys):
+    config = LineWalk()
+    optimizer = OptimizerConfig(torch.optim.SGD, lr=0.05)
+    config.algo = PPOA2CConfig(optimizer=optimizer)
+    config.critic = ModelConfig(TestValueFunction, features=config.env.state_space_shape[0])
+    config.actor = ModelConfig(LookupDiscreteTestPolicy, config.env.state_space_shape[0], config.env.actions)
+    config.data.action_transform = DataConfigItem(DiscreteActionTransform, config.env.action_map)
+
+    algo = config.algo.construct()
+    actor = PPOWrapModel(config.actor.construct())
+    critic = config.critic.construct()
+
+    for epoch in range(20):
+        exp_buffer = rollout_policy(50, actor, config, capsys, render=False)
+        actor, critic = algo(actor, critic, exp_buffer, config, device='cuda')
+        #print(critic.weights.data)
+        print(actor.new.probs.data[1])
+
+
+def testPPOA2CwithLander(capsys):
+    config = configs.Discrete('LunarLander-v2')
+
+    optimizer = OptimizerConfig(torch.optim.SGD, lr=0.00001)
+    config.algo = PPOA2CConfig(optimizer=optimizer, logging_freq=400)
+    config.algo.min_change = 0.1
+    config.algo.ppo_steps_per_batch = 1
+    config.gatherer.max_rollout_len = 500
+    config.critic = ModelConfig(SimpleValueFunction, features=config.env.state_space_shape[0], resnet_layers=3)
+    config.actor = ModelConfig(MultiPolicyNet, config.env.state_space_shape[0], config.env.actions)
+    config.data.action_transform = DataConfigItem(DiscreteActionTransform, config.env.action_map)
+
+    actor = PPOWrapModel(config.actor.construct())
+    critic = config.critic.construct()
+    algo = config.algo.construct()
+
+    for epoch in range(200):
+        render = (epoch % 1 == 0)
+        exp_buffer = rollout_policy(50, actor, config, capsys, render=render, render_freq=200)
+        actor, critic = algo(actor, critic, exp_buffer, config, device='cuda')

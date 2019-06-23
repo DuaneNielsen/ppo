@@ -1,23 +1,24 @@
 from __future__ import print_function
 import os
 
-os.environ['CUDA_VISIBLE_DEVICES'] = '0'
-os.environ['GPU_DEBUG'] = '0'
 
 from util import Converged
 from torch.utils.data import DataLoader
 import logging
-gpu_profile = False
+gpu_profile = True
 if gpu_profile:
     from util import gpu_profile
     import sys
-    sys.settrace(gpu_profile)
+    #sys.settrace(gpu_profile)
+    os.environ['CUDA_VISIBLE_DEVICES'] = '0'
+    os.environ['GPU_DEBUG'] = '0'
 
 logger = logging.getLogger(__name__)
 from time import time
 from data.data import SARAdvantageDataset, SARSDataset
 from models import *
-
+import numpy as np
+import gc
 
 # default optimizers
 
@@ -122,7 +123,7 @@ class OneStepTD:
 
         one_step_config = config.algo
         critic = critic.to(device)
-        greedy_policy = ValuePolicy(critic, GreedyDiscreteDist).to(device)
+        greedy_policy = ValuePolicy(critic, GreedyDiscreteOneHotDist).to(device)
         pin_memory = device == 'cuda'
         optim = one_step_config.optimizer.construct(critic.parameters())
         dataset = SARSDataset(exp_buffer, state_transform=transform, action_transform=action_transform)
@@ -167,6 +168,163 @@ class OneStepTD:
 
         # return an epsilon greedy policy as actor
         return ValuePolicy(critic, EpsilonGreedyDiscreteDist, epsilon=one_step_config.epsilon), critic
+
+
+class BootstrapValue:
+    def __call__(self, actor, critic, exp_buffer, config, device='cpu'):
+        transform, action_transform = config.data.transforms()
+
+        algo = config.algo
+        critic = critic.to(device)
+        pin_memory = device == 'cuda'
+        optim = algo.optimizer.construct(critic.parameters())
+        dataset = SARSDataset(exp_buffer, state_transform=transform, action_transform=action_transform)
+        loader = DataLoader(dataset, batch_size=len(dataset), shuffle=True, pin_memory=pin_memory)
+        c = Converged(algo.min_change, detections=algo.detections,
+                      detection_window=algo.detection_window)
+
+        loss = torch.tensor([-1.0])
+
+        for state, action, reward, next_state, done in loader:
+
+            state = state.to(device)
+            reward = reward.to(device)
+            next_state = next_state.to(device)
+            done = done.to(device)
+            prev = None
+            current = None
+            iter = 0
+
+            logger.info(torch.sum(state, dim=0))
+
+            while not c.converged(current, prev):
+                iter += 1
+
+                zero_if_terminal = (~done).to(next_state.dtype)
+                next_value = critic(next_state)
+                target = reward + zero_if_terminal * config.algo.discount_factor * next_value
+
+                optim.zero_grad()
+                predicted = critic(state)
+                error = target - predicted
+                loss = torch.mean(error ** 2)
+                loss.backward()
+                optim.step()
+
+                with torch.no_grad():
+                    prev = predicted.detach()
+                    current = critic(state).detach()
+
+                if iter % algo.logging_freq == 0:
+                    max_error = error.abs().max()
+                    min_error = error.abs().min()
+                    mean_error = error.abs().mean()
+                    logger.info(f'iterations: {iter}')
+                    logger.info(f'loss     : {loss.item()}')
+                    logger.info(f'max_error: {max_error.item()}')
+                    logger.info(f'min_error: {min_error.item()}')
+                    logger.info(f'mean_error: {mean_error.item()}')
+
+        return critic, critic
+
+
+class PPOAC2:
+    def __call__(self, actor, critic, exp_buffer, config, device='cpu'):
+        transform, action_transform = config.data.transforms()
+
+        algo = config.algo
+        critic = critic.to(device).train()
+        actor = actor.to(device)
+        pin_memory = device == 'cuda'
+        optim = algo.optimizer.construct(critic.parameters())
+        dataset = SARSDataset(exp_buffer, state_transform=transform, action_transform=action_transform)
+        loader = DataLoader(dataset, batch_size=len(dataset), shuffle=True, pin_memory=pin_memory)
+        c = Converged(algo.min_change, detections=algo.detections,
+                      detection_window=algo.detection_window)
+
+        loss = torch.tensor([-1.0])
+        iter = 0
+
+        for state, action, reward, next_state, done in loader:
+
+            state = state.to(device)
+            reward = reward.to(device)
+            next_state = next_state.to(device)
+            done = done.to(device)
+
+            prev_values = np.ones(state.size(0)) * 1000.0
+            predicted = np.ones(state.size(0))
+            mean_delta_value = np.mean(np.abs(predicted - prev_values))
+
+            #while mean_delta_value > algo.min_change and iter < 5000:
+            for i in range(10):
+
+                zero_if_terminal = (~done).to(next_state.dtype)
+                next_value = critic(next_state)
+                target = reward + zero_if_terminal * config.algo.discount_factor * next_value
+
+                optim.zero_grad()
+                predicted = critic(state)
+                error = target - predicted
+                loss = torch.mean(error ** 2)
+                loss.backward()
+                optim.step()
+
+                iter += 1
+                loss_item = loss.item()
+                predicted = predicted.detach().cpu().numpy()
+                delta_value = np.abs(predicted - prev_values)
+                mean_delta_value = delta_value.max()
+                prev_values = predicted
+
+                if iter % algo.logging_freq == 0:
+                    logger.info(f'iter     : {iter}')
+                    logger.info(f'loss     : {loss_item}')
+                    logger.info(f'mean_pred: {delta_value.mean()}')
+                    logger.info(f'max_pred : {delta_value.max()}')
+                    logger.info(f'min_pred : {delta_value.min()}')
+
+
+            logger.info(f'iterations: {iter}')
+        optim = algo.optimizer.construct(actor.parameters())
+        batches_p = 0
+        for state, action, reward, next_state, done in loader:
+            batches_p += 1
+
+            state = state.to(device)
+            reward = reward.to(device)
+            next_state = next_state.to(device)
+            action = action.to(device)
+            done = done.to(device)
+
+            #simple form of the generalized advantage estimate
+
+            with torch.no_grad():
+                value = critic(state).squeeze()
+                zero_if_terminal = (~done).to(next_state.dtype)
+                value_next = zero_if_terminal * critic(next_state).squeeze()
+                advantage = reward + value_next - value
+                advantage = advantage - advantage.mean() / advantage.std()
+
+            for step in range(config.algo.ppo_steps_per_batch):
+
+                optim.zero_grad()
+
+                new_dist = actor(state)
+                new_logprob = new_dist.log_prob(action)
+                new_logprob.retain_grad()
+
+                old_dist = actor(state, old=True)
+                old_logprob = old_dist.log_prob(action)
+                actor.backup()
+
+                loss = ppo_loss_log(new_logprob, old_logprob, advantage, clip=0.2)
+                loss.backward()
+
+                optim.step()
+
+        # return a random policy
+        return actor, critic
 
 
 
