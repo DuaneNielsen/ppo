@@ -12,8 +12,8 @@ from models import GreedyDist
 from colorama import Style, Fore
 from collections import deque
 from util import Timer
-import random
-from sklearn.utils.random import sample_without_replacement
+import objgraph
+
 
 logger = logging.getLogger(__name__)
 logging.basicConfig(format='%(levelname)s-%(module)s-%(message)s', level=logging.DEBUG)
@@ -239,9 +239,9 @@ class SARSGridDataset(Dataset):
 
     def _transform(self, step, resetting):
         state = torch.from_numpy(step.state)
-        action = torch.tensor(step.action)
-        reward = torch.tensor(step.reward)
-        done = torch.tensor(step.done, dtype=torch.uint8)
+        action = torch.tensor(step.action.item())
+        reward = torch.tensor(step.reward.item())
+        done = torch.tensor(step.done.item(), dtype=torch.uint8)
         resetting = torch.tensor(resetting, dtype=torch.uint8)
         next_state = torch.from_numpy(step.next_state)
         return state, action, reward, done, resetting, next_state
@@ -251,24 +251,13 @@ class SARSGridDataset(Dataset):
         offset = item % self.batch_size
         step = self.episode[t][offset]
         if t > 0:
-            resetting = self.episode[t - 1][offset].done
+            resetting = self.episode[t - 1][offset].done.item()
         else:
             resetting = 0
         return self._transform(step, resetting)
 
     def __len__(self):
         return len(self.episode) * self.batch_size
-
-
-def multidimensional_shifting(num_samples, sample_size, elements, probabilities):
-    # replicate probabilities as many times as `num_samples`
-    replicated_probabilities = np.tile(probabilities, (num_samples, 1))
-    # get random shifting numbers & scale them correctly
-    random_shifts = np.random.random(replicated_probabilities.shape)
-    random_shifts /= random_shifts.sum(axis=1)[:, np.newaxis]
-    # shift by numbers & find largest (by finding the smallest of the negative)
-    shifted_probabilities = random_shifts - replicated_probabilities
-    return np.argpartition(shifted_probabilities, sample_size, axis=1)[:, :sample_size]
 
 
 class SARSGridDataLoader:
@@ -281,7 +270,9 @@ class SARSGridDataLoader:
 
     def __next__(self):
         sample = np.random.randint(len(self.dataset), size=self.batch_size)
-        data = [self.dataset[item] for item in np.nditer(sample)]
+        data = []
+        for item in np.nditer(sample):
+            data.append(self.dataset[item])
         batch = default_collate(data)
         return batch
 
@@ -572,7 +563,7 @@ def test_shortwalk_deepq():
     critic.weights.data[0, 0, 1] = 1.0
     critic.weights.data[1, 0, 1] = -1.0
     optim = torch.optim.SGD(critic.parameters(), lr=0.1)
-    policy = QPolicy(critic, actions, EpsilonGreedyProperDiscreteDist, epsilon=0.05).to(device)
+    policy = QPolicy(critic, actions, EpsilonGreedyProperDiscreteDist, epsilon=0.1).to(device)
     rw = RunningReward(ll_runs, 2000)
     ave_reward = 0
     exp_buffer = []
@@ -581,7 +572,7 @@ def test_shortwalk_deepq():
 
     while ave_reward < 0.95:
 
-        state, reward, done = one_step(env, state, policy, exp_buffer, render=False)
+        state, reward, done = one_step(env, state, policy, exp_buffer, render=True)
         rw.add(reward.cpu().numpy(), done.cpu().numpy())
         if len(rw.recent) > 0:
             logger.info(f'reward {mean(rw.recent)} epi {len(rw.recent)}')
@@ -589,7 +580,7 @@ def test_shortwalk_deepq():
             logger.info(f'reward 0 epi {len(rw.recent)}')
         rw.reset()
 
-        policy, critic = train_one(exp_buffer, critic, device, optim, actions=actions, epsilon=0.05, logging_freq=0)
+        policy, critic = train_one(exp_buffer, critic, device, optim, actions=actions, epsilon=0.1, logging_freq=0)
         if len(exp_buffer) > 100:
             exp_buffer.pop(0)
 
@@ -616,6 +607,7 @@ def run_deep_q_on(map, ll_runs, replay_window=1000, epsilon=0.06, batch_size=100
 
     while ave_reward < 0.95:
         if i % logging_freq == 0:
+            logger.info(f"{Fore.LIGHTBLUE_EX}exp buffer: {len(exp_buffer)}{Style.RESET_ALL}")
             timer.start('main_loop')
             timer.start('step')
         state, reward, done = one_step(env, state, policy, exp_buffer, render=i % logging_freq == 0)
@@ -660,7 +652,7 @@ def test_frozenlake():
     [E, E, T, E, T(1.0)]
     ]
     """
-    run_deep_q_on(map, ll_runs=8000, epsilon=0.1, replay_window=10000, batch_size=10000, workers=12)
+    run_deep_q_on(map, ll_runs=8000, epsilon=0.1, replay_window=20, batch_size=10000, workers=12)
 
 
 def test_fake_lunar_lander():
@@ -677,7 +669,7 @@ def test_fake_lunar_lander():
     [T(-1.0), T(-1.0), T(-1.0), T(-1.0), T(-1.0), T(-1.0), T(-1.0), T(-1.0), T(-1.0), T(-1.0), T(-1.0), T(-1.0), T(-1.0), T(-1.0), T(-1.0), T(-1.0), T(-1.0), T(-1.0), T(-1.0), T(-1.0), T(-1.0), T(-1.0), T(-1.0), T(-1.0), T(-1.0), T(-1.0), T(-1.0), T(-1.0), T(-1.0), T(-1.0)]
     ]
     """
-    run_deep_q_on(map, ll_runs=8000, epsilon=0.1, replay_window=1000, batch_size=8000, workers=12)
+    run_deep_q_on(map, ll_runs=8000, epsilon=0.1, replay_window=100, batch_size=16000, workers=12)
 
 
 def test_grid_walk():
